@@ -1,0 +1,144 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>OE Manager GUI</title>
+    <link rel="stylesheet" href="css/style.css">
+</head>
+<body>
+    <div class="app-container">
+        <!-- Header -->
+        <header class="app-header">
+            <h1>OE Manager GUI</h1>
+            <div class="header-actions">
+                <button id="configureBtn" class="btn btn-secondary">Configure</button>
+                <button id="refreshBtn" class="btn btn-primary" disabled>Refresh</button>
+            </div>
+        </header>
+
+        <!-- Configuration Modal -->
+        <div id="configModal" class="modal hidden">
+            <div class="modal-content">
+                <div class="modal-header">
+                    <h2>Server Configuration</h2>
+                    <button class="modal-close" id="closeConfigModal">&times;</button>
+                </div>
+                <div class="modal-body">
+                    <form id="configForm">
+                        <div class="form-group">
+                            <label for="baseUrl">Base URL</label>
+                            <input type="text" id="baseUrl" placeholder="https://your-pasoe-server:8810" required>
+                        </div>
+                        <div class="form-group">
+                            <label for="username">Username</label>
+                            <input type="text" id="username" required>
+                        </div>
+                        <div class="form-group">
+                            <label for="password">Password</label>
+                            <input type="password" id="password" required>
+                        </div>
+                        <div class="form-group">
+                            <label>
+                                <input type="checkbox" id="rejectUnauthorized">
+                                Verify SSL Certificate
+                            </label>
+                        </div>
+                        <div class="form-actions">
+                            <button type="button" class="btn btn-secondary" id="cancelConfig">Cancel</button>
+                            <button type="submit" class="btn btn-primary">Connect</button>
+                        </div>
+                    </form>
+                </div>
+            </div>
+        </div>
+
+        <!-- Main Content -->
+        <main class="main-content">
+            <!-- Sidebar Navigation -->
+            <nav class="sidebar">
+                <ul class="nav-list">
+                    <li class="nav-item active" data-view="agents">
+                        <span class="nav-icon">👥</span>
+                        <span class="nav-label">Agents</span>
+                    </li>
+                    <li class="nav-item" data-view="charts">
+                        <span class="nav-icon">📊</span>
+                        <span class="nav-label">Charts</span>
+                    </li>
+                    <li class="nav-item" data-view="metrics">
+                        <span class="nav-icon">📈</span>
+                        <span class="nav-label">Metrics</span>
+                    </li>
+                </ul>
+            </nav>
+
+            <!-- Content Area -->
+            <div class="content-area">
+                <!-- Application Selector -->
+                <div class="toolbar">
+                    <label for="applicationSelect">Application:</label>
+                    <select id="applicationSelect" disabled>
+                        <option value="">-- Select Application --</option>
+                    </select>
+                </div>
+
+                <!-- Agents View -->
+                <section id="agentsView" class="view active">
+                    <div class="view-header">
+                        <h2>Agents</h2>
+                        <div class="view-actions">
+                            <button id="addAgentBtn" class="btn btn-success" disabled>Add Agent</button>
+                            <button id="trimAllBtn" class="btn btn-warning" disabled>Trim All</button>
+                        </div>
+                    </div>
+                    <div class="agents-container">
+                        <div class="placeholder">
+                            <p>Configure a server connection to view agents</p>
+                        </div>
+                    </div>
+                </section>
+
+                <!-- Charts View -->
+                <section id="chartsView" class="view hidden">
+                    <div class="view-header">
+                        <h2>Performance Charts</h2>
+                    </div>
+                    <div class="charts-container">
+                        <div class="chart-panel">
+                            <h3>Memory Usage</h3>
+                            <canvas id="memoryChart"></canvas>
+                        </div>
+                        <div class="chart-panel">
+                            <h3>Requests</h3>
+                            <canvas id="requestsChart"></canvas>
+                        </div>
+                    </div>
+                </section>
+
+                <!-- Metrics View -->
+                <section id="metricsView" class="view hidden">
+                    <div class="view-header">
+                        <h2>Agent Metrics</h2>
+                    </div>
+                    <div class="metrics-container">
+                        <div class="placeholder">
+                            <p>Select an application to view metrics</p>
+                        </div>
+                    </div>
+                </section>
+            </div>
+        </main>
+
+        <!-- Status Bar -->
+        <footer class="status-bar">
+            <span id="connectionStatus" class="status-item">Not connected</span>
+            <span id="lastUpdate" class="status-item"></span>
+        </footer>
+    </div>
+
+    <!-- Chart.js for performance charts -->
+    <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
+    <script src="js/app.js"></script>
+</body>
+</html>
