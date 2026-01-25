@@ -1,178 +1,201 @@
-# OE Manager GUI - Java Web Application
+# OE Manager GUI
 
-A web-based GUI for managing OpenEdge PASOE (Progress Application Server) agents and sessions. This is a Java-based clone of the oemanagergui VS Code extension, designed to be deployed as a WAR file on the same Tomcat server running PASOE.
+Web-based management interface for OpenEdge PASOE agents and sessions. This is a static webapp port of the [VS Code OE Manager GUI extension](https://marketplace.visualstudio.com/items?itemName=diabolo-68.oemanagergui).
 
 ## Features
 
-- **Agent Management**: View, add, delete, and trim PASOE agents
-- **Session Monitoring**: View active sessions per agent
-- **Performance Charts**: Real-time memory and request metrics visualization
-- **Multi-Application Support**: Manage multiple PASOE applications
-- **Dark Theme UI**: Consistent with VS Code aesthetics
+- **Agents View**: Monitor and manage PASOE agents with real-time session and request tracking
+- **Charts View**: Visualize memory usage and request statistics over time
+- **Metrics View**: Display SessionManager metrics and per-agent statistics
+- **Settings View**: Configure trim agent settings and refresh intervals
+
+### Agent Management
+
+![Agents View](resources/agent-view.png)
+- View all agents and their states (Available, Busy, Locked)
+- Add new agents to the pool
+- Delete agents (graceful shutdown)
+- Trim idle sessions from agents
+- Enable/Disable ABL Objects tracking
+- View ABL Objects Report
+- Cancel running requests
+
+### Charts
+
+![Charts View 1](resources/charts-view-1.png)
+
+![Charts View 2](resources/charts-view-2.png)
+
+![Charts View 3](resources/charts-view-3.png)
+
+- Memory usage over time (heap memory)
+- Request statistics (completed vs failed)
+- Auto-refresh with configurable intervals
+- Historical data visualization
+
+### Metrics
+
+![Metrics View 1](resources/metrics-view-1.png)
+
+![Metrics View 2](resources/metrics-view-2.png)
+
+![Metrics View 3](resources/metrics-view-3.png)
+
+- SessionManager metrics (sessions, requests, memory)
+- Per-agent metrics with reset capability
+- Real-time updates
+
+## Requirements
+
+- OpenEdge PASOE 11.7 or later
+
+## Installation
+
+### Option 1: Build from Source
+
+1. Clone this repository
+2. Build with Maven:
+   ```powershell
+   mvn clean package
+   ```
+3. Deploy `target/oemanagergui.war` to Pasoe
+
+### Option 2: Download WAR
+
+Download the latest `oemanagergui.war` from releases and deploy to Pasoe.
+
+## Deployment
+
+### Tomcat Standalone
+
+Copy the WAR file to Tomcat's webapps directory:
+
+```powershell
+Copy-Item target/oemanagergui.war $env:CATALINA_HOME/webapps/
+```
+
+Access at: `http(s)://<base_url>/oemanagergui/`
+
+### PASOE Instance
+
+Deploy alongside PASOE by copying to its webapps:
+
+
+## Configuration
+
+On first launch, you'll be prompted to log in:
+
+### Login
+
+| Field | Description |
+|-------|-------------|
+| Username | OE Manager username |
+| Password | OE Manager password (not stored - re-enter each session) |
+
+**Note**: The Base URL is automatically derived from the webapp location. Deploy on the same PASOE instance as the oemanager API.
+
+### Settings
+
+Click the **Settings** tab in the sidebar to configure:
+
+![Settings View](resources/settings-view.png)
+
+| Setting | Description | Default |
+|---------|-------------|--------|
+| Wait to Finish | Time to wait for agent to finish requests (ms) | 120000 |
+| Wait After Stop | Time to wait after stopping agent (ms) | 60000 |
+| Agents Refresh | Auto-refresh interval for agents list (seconds) | 10 |
+| Requests Refresh | Auto-refresh interval for requests (seconds) | 5 |
+| Charts Refresh | Auto-refresh interval for charts (seconds) | 10 |
+
+## Usage
+
+### Connecting
+
+1. Open the webapp - the Login modal appears automatically
+2. Enter your OE Manager credentials
+3. Click **Login**
+4. The application dropdown will populate with available applications
+5. Select an application to start managing agents
+6. Click **Logout** in the header to disconnect
+
+### Agent Actions
+
+Right-click on an agent row to access the context menu:
+
+- **Add Agent** - Add a new agent to the pool
+- **Delete Agent** - Remove the agent (graceful shutdown)
+- **Trim Sessions** - Close idle sessions on this agent
+- **Enable ABL Objects** - Start tracking ABL object usage
+- **Disable ABL Objects** - Stop tracking ABL objects
+- **ABL Objects Report** - View current ABL objects report
+- **Reset Statistics** - Reset agent statistics counters
+
+### Views
+
+Switch between views using the sidebar:
+
+- **Agents** - Agent/Session/Request management
+- **Charts** - Memory and request charts
+- **Metrics** - SessionManager and agent metrics
+- **Settings** - Configure refresh intervals and trim settings
 
 ## Architecture
 
 ```
-┌─────────────────────────────────────────────────────────────────────┐
-│                         Browser (Web UI)                             │
-│  ┌─────────────────┐  ┌─────────────────┐  ┌─────────────────────┐  │
-│  │  Agents Panel   │  │  Charts Panel   │  │   Metrics Panel     │  │
-│  └────────┬────────┘  └────────┬────────┘  └──────────┬──────────┘  │
-└───────────┼─────────────────────┼──────────────────────┼────────────┘
-            │                     │                      │
-            └─────────────────────┼──────────────────────┘
-                                  │ REST API (JSON)
-                                  ▼
-┌─────────────────────────────────────────────────────────────────────┐
-│                    oemanagergui.war (Tomcat)                        │
-│  ┌─────────────────────────────────────────────────────────────┐   │
-│  │                 Jersey REST Resources                        │   │
-│  │  /api/agents/applications, /api/agents/{app}/{id}/sessions  │   │
-│  └─────────────────────────────────────────────────────────────┘   │
-│                              │                                      │
-│  ┌─────────────────────────────────────────────────────────────┐   │
-│  │                      AgentService                            │   │
-│  │  Proxies requests to PASOE oemanager REST API                │   │
-│  └─────────────────────────────────────────────────────────────┘   │
-└─────────────────────────────────────────────────────────────────────┘
-                                  │
-                                  ▼ HTTP/HTTPS
-┌─────────────────────────────────────────────────────────────────────┐
-│                      PASOE Server                                    │
-│              /oemanager/applications/...                             │
-└─────────────────────────────────────────────────────────────────────┘
+Browser (HTML/CSS/JS) → PASOE oemanager REST API
 ```
 
-## Prerequisites
+This is a pure static webapp with no backend server. All API calls go directly to PASOE's oemanager REST API using the Fetch API with Basic Authentication.
 
-- **Java JDK 11+** (for building)
-- **Maven 3.6+** (for building)
-- **Tomcat 10+** (Jakarta EE 10 - for deployment)
-  - Or Tomcat 9.x with `jakarta.servlet-api` replaced by `javax.servlet-api`
-
-## Quick Start
-
-### Build
-
-```bash
-cd oemanagergui-java
-mvn clean package
-```
-
-This produces `target/oemanagergui.war`.
-
-### Deploy to Tomcat
-
-1. Copy `target/oemanagergui.war` to `$CATALINA_HOME/webapps/`
-2. Tomcat will auto-deploy the application
-3. Access at: `http://localhost:8080/oemanagergui/`
-
-### Development Mode
-
-Run with embedded Jetty (port 8090):
-
-```bash
-mvn jetty:run
-```
-
-Access at: `http://localhost:8090/oemanagergui/`
-
-## Project Structure
+### File Structure
 
 ```
-oemanagergui-java/
-├── pom.xml                           # Maven configuration
-├── src/
-│   ├── main/
-│   │   ├── java/com/diabolo/oemanager/
-│   │   │   ├── OeManagerApplication.java    # JAX-RS application config
-│   │   │   ├── model/                       # Data models
-│   │   │   │   ├── AgentInfo.java
-│   │   │   │   ├── SessionInfo.java
-│   │   │   │   ├── ApplicationInfo.java
-│   │   │   │   └── ServerConfig.java
-│   │   │   ├── service/
-│   │   │   │   └── AgentService.java        # PASOE API client
-│   │   │   └── rest/
-│   │   │       └── AgentResource.java       # REST endpoints
-│   │   ├── resources/
-│   │   │   └── logback.xml                  # Logging config
-│   │   └── webapp/
-│   │       ├── index.html                   # Main UI
-│   │       ├── css/style.css                # Styles
-│   │       └── js/app.js                    # JavaScript app
-│   └── test/
-│       └── java/                            # Unit tests
-└── .github/
-    └── copilot-instructions.md              # AI agent instructions
+oemanagergui/
+├── index.html              # Main HTML with all views and templates
+├── css/
+│   └── style.css           # Dark theme styles
+├── js/
+│   ├── agentService.js     # API wrapper for oemanager REST API
+│   ├── app.js              # Main application class
+│   ├── agentsView.js       # Agents view mixin
+│   ├── chartsView.js       # Charts view mixin
+│   ├── metricsView.js      # Metrics view mixin
+│   ├── templates.js        # HTML templates helper
+│   └── utils.js            # Utility functions
+├── WEB-INF/
+│   └── web.xml             # Webapp descriptor
+├── pom.xml                 # Maven build configuration
+├── CHANGELOG.md            # Version history
+└── README.md
 ```
 
-## REST API
+## API Endpoints Used
 
-All endpoints accept `ServerConfig` in the request body for authentication.
+All endpoints follow pattern: `{baseUrl}/oemanager/applications/{app}/...`
 
 | Endpoint | Method | Description |
 |----------|--------|-------------|
-| `/api/agents/applications` | POST | List PASOE applications |
-| `/api/agents/list/{app}` | POST | List agents for an application |
-| `/api/agents/{app}/{agentId}/sessions` | POST | Get sessions for an agent |
-| `/api/agents/{app}/metrics` | POST | Get session manager metrics |
-| `/api/agents/{app}/{agentId}/metrics` | POST | Get agent-specific metrics |
-| `/api/agents/{app}/add` | POST | Add a new agent |
-| `/api/agents/{app}/{agentId}/delete` | POST | Delete an agent |
-| `/api/agents/{app}/{agentId}/trim` | POST | Trim idle sessions |
-| `/api/agents/{app}/{agentId}/resetStats` | POST | Reset agent statistics |
+| `/oemanager/applications` | GET | List applications |
+| `/agents` | GET | List agents |
+| `/agents/{id}/sessions` | GET | Agent sessions |
+| `/agents/{id}/requests` | GET | Agent requests |
+| `/agents/properties` | GET/PUT | Agent properties |
+| `/metrics` | GET | SessionManager metrics |
+| `/agents/{id}/metrics` | GET | Agent metrics |
+| `/agents` | POST | Add agent |
+| `/agents/{id}` | DELETE | Trim agent (graceful shutdown) |
+| `/agents/{id}/sessions/{sid}?terminateOpt=2` | DELETE | Terminate session |
+| `/agents/{id}/agentStatData` | DELETE | Reset statistics |
+| `/agents/{id}/ABLObjects` | PUT | Enable/Disable ABL objects |
+| `/agents/{id}/ABLObjectsReport` | GET | Get ABL objects report |
+| `/requests/{id}/cancel` | PUT | Cancel request |
 
-### Example Request
+## Related Projects
 
-```bash
-curl -X POST http://localhost:8080/oemanagergui/api/agents/applications \
-  -H "Content-Type: application/json" \
-  -d '{
-    "baseUrl": "https://pasoe-server:8810",
-    "username": "admin",
-    "password": "secret",
-    "rejectUnauthorized": false
-  }'
-```
-
-## Configuration
-
-The web UI stores server configuration in browser localStorage (except password). On each request, the full configuration including password is sent to the backend.
-
-For production, consider:
-- Implementing server-side session management
-- Using environment variables for default configuration
-- Adding CORS restrictions
-
-## Differences from VS Code Extension
-
-| Feature | VS Code Extension | Java Web App |
-|---------|------------------|--------------|
-| Configuration | VS Code settings + SecretStorage | Browser localStorage + per-request |
-| Authentication | Stored securely in VS Code | Must be entered each session |
-| Auto-refresh | Visibility-aware timers | JavaScript intervals |
-| Deployment | `.vsix` file | `.war` file on Tomcat |
-| Charts | Internal rendering | Chart.js library |
-
-## Development
-
-### Adding a New API Endpoint
-
-1. Add method to `AgentService.java`
-2. Add REST endpoint in `AgentResource.java`
-3. Call from JavaScript in `app.js`
-
-### Modifying the UI
-
-- HTML structure: `src/main/webapp/index.html`
-- Styles: `src/main/webapp/css/style.css` (uses VS Code-like CSS variables)
-- JavaScript: `src/main/webapp/js/app.js`
+- [VS Code OE Manager GUI](https://marketplace.visualstudio.com/items?itemName=diabolo-68.oemanagergui) - Original VS Code extension
+- [OpenEdge Documentation](https://docs.progress.com/bundle/openedge-management) - PASOE management documentation
 
 ## License
 
 MIT License - see [LICENSE](LICENSE) file.
-
-## Related Projects
-
-- [oemanagergui](../oemanagergui) - VS Code extension version

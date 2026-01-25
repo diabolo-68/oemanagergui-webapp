@@ -1,0 +1,532 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>OE Manager GUI</title>
+    <link rel="stylesheet" href="css/style.css">
+    <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/chartjs-adapter-date-fns@3.0.0/dist/chartjs-adapter-date-fns.bundle.min.js"></script>
+</head>
+<body>
+    <div class="app-container">
+        <!-- Header -->
+        <header class="app-header">
+            <div class="header-left">
+                <h1>🔧 OE Manager GUI</h1>
+            </div>
+            <div class="header-right">
+                <span id="userDisplay" class="user-display hidden"></span>
+                <button class="btn btn-primary" id="loginBtn">Login</button>
+                <button class="btn btn-secondary" id="logoutBtn" style="display: none;">Logout</button>
+                <button class="btn btn-secondary" id="refreshBtn" disabled>Refresh</button>
+            </div>
+        </header>
+
+        <!-- Login Modal -->
+        <div id="loginModal" class="modal hidden">
+            <div class="modal-content modal-small">
+                <div class="modal-header">
+                    <h2>🔐 Login</h2>
+                    <button class="modal-close" id="closeLoginModal">&times;</button>
+                </div>
+                <div class="modal-body">
+                    <form id="loginForm">
+                        <div class="form-group">
+                            <label for="username">Username</label>
+                            <input type="text" id="username" required autocomplete="username" placeholder="Enter username">
+                        </div>
+                        <div class="form-group">
+                            <label for="password">Password</label>
+                            <input type="password" id="password" required autocomplete="current-password" placeholder="Enter password">
+                            <small class="form-hint">Password is not stored - you'll need to enter it each session</small>
+                        </div>
+                        <div class="form-actions">
+                            <button type="button" class="btn btn-secondary" id="cancelLogin">Cancel</button>
+                            <button type="submit" class="btn btn-primary">Login</button>
+                        </div>
+                    </form>
+                </div>
+            </div>
+        </div>
+
+        <!-- Main Content -->
+        <main class="main-content">
+            <!-- Sidebar Navigation -->
+            <nav class="sidebar">
+                <ul class="nav-list">
+                    <li class="nav-item active" data-view="agents">
+                        <span class="nav-icon">👥</span>
+                        <span class="nav-label">Agents</span>
+                    </li>
+                    <li class="nav-item" data-view="charts">
+                        <span class="nav-icon">📊</span>
+                        <span class="nav-label">Charts</span>
+                    </li>
+                    <li class="nav-item" data-view="metrics">
+                        <span class="nav-icon">📈</span>
+                        <span class="nav-label">Metrics</span>
+                    </li>
+                    <li class="nav-item" data-view="settings">
+                        <span class="nav-icon">⚙️</span>
+                        <span class="nav-label">Settings</span>
+                    </li>
+                </ul>
+            </nav>
+
+            <!-- Content Area -->
+            <div class="content-area">
+                <!-- Application Selector -->
+                <div class="toolbar">
+                    <div class="toolbar-left">
+                        <label for="applicationSelect">Application:</label>
+                        <select id="applicationSelect" disabled>
+                            <option value="">-- Configure Server --</option>
+                        </select>
+                    </div>
+                    <div class="toolbar-right" id="agentsToolbar">
+                        <button class="btn btn-primary" id="propertiesBtn" disabled>Properties</button>
+                        <button class="btn btn-success" id="addAgentBtn" disabled>Add Agent</button>
+                        <button class="btn btn-warning" id="trimAllBtn" disabled>Trim All</button>
+                    </div>
+                    <div class="toolbar-right hidden" id="metricsToolbar">
+                        <label class="checkbox-label">
+                            <input type="checkbox" id="chkIncludeRequests" />
+                            <span>Include Requests</span>
+                        </label>
+                        <button class="btn btn-secondary" id="refreshMetricsBtn">Refresh</button>
+                        <button class="btn btn-warning" id="resetStatsBtn">Reset All Stats</button>
+                    </div>
+                </div>
+
+                <!-- ==================== AGENTS VIEW ==================== -->
+                <div id="agentsView" class="view active">
+                    <!-- Agents Grid -->
+                    <div class="grid-section">
+                        <div class="section-header">
+                            <h2>Agents</h2>
+                            <span id="agentCount" class="badge">0</span>
+                        </div>
+                        <div class="grid-container">
+                            <table class="data-grid">
+                                <thead>
+                                    <tr>
+                                        <th>Agent ID</th>
+                                        <th>PID</th>
+                                        <th>State</th>
+                                        <th>Sessions</th>
+                                        <th>Actions</th>
+                                    </tr>
+                                </thead>
+                                <tbody id="agentsTableBody">
+                                    <tr><td colspan="5" class="empty-state">Configure a server to view agents</td></tr>
+                                </tbody>
+                            </table>
+                        </div>
+                    </div>
+
+                    <!-- Sessions Grid -->
+                    <div class="grid-section">
+                        <div class="section-header">
+                            <h2>Sessions</h2>
+                            <span id="sessionCount" class="badge">0</span>
+                            <span id="selectedAgentInfo" class="info-text"></span>
+                        </div>
+                        <div class="grid-container">
+                            <table class="data-grid">
+                                <thead>
+                                    <tr>
+                                        <th>Session ID</th>
+                                        <th>State</th>
+                                        <th>Connection ID</th>
+                                        <th>Request Count</th>
+                                        <th>Started</th>
+                                    </tr>
+                                </thead>
+                                <tbody id="sessionsTableBody">
+                                    <tr><td colspan="5" class="empty-state">Select an agent to view sessions</td></tr>
+                                </tbody>
+                            </table>
+                        </div>
+                    </div>
+
+                    <!-- Requests Grid -->
+                    <div class="grid-section">
+                        <div class="section-header">
+                            <h2>Running Queries</h2>
+                            <span id="requestCount" class="badge">0</span>
+                            <label class="auto-refresh-toggle">
+                                <input type="checkbox" id="requestsAutoRefresh" checked>
+                                Auto-refresh
+                            </label>
+                        </div>
+                        <div class="grid-container">
+                            <table class="data-grid">
+                                <thead>
+                                    <tr>
+                                        <th>Request ID</th>
+                                        <th>Session ID</th>
+                                        <th>URL</th>
+                                        <th>State</th>
+                                        <th>Elapsed</th>
+                                        <th>Actions</th>
+                                    </tr>
+                                </thead>
+                                <tbody id="requestsTableBody">
+                                    <tr><td colspan="6" class="empty-state">Select an application to view running queries</td></tr>
+                                </tbody>
+                            </table>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- ==================== CHARTS VIEW ==================== -->
+                <div id="chartsView" class="view hidden">
+                    <!-- Session Bar Charts -->
+                    <div class="chart-section">
+                        <h2>Session Charts</h2>
+                        <div id="sessionChartsContainer" class="session-charts-row">
+                            <div class="chart-wrapper-small">
+                                <h4>Session Memory (MB)</h4>
+                                <canvas id="sessionMemoryChart"></canvas>
+                            </div>
+                            <div class="chart-wrapper-small">
+                                <h4>Requests Completed</h4>
+                                <canvas id="sessionCompletedChart"></canvas>
+                            </div>
+                            <div class="chart-wrapper-small">
+                                <h4>Requests Failed</h4>
+                                <canvas id="sessionFailedChart"></canvas>
+                            </div>
+                        </div>
+                    </div>
+                    
+                    <!-- Time Series Charts -->
+                    <div class="chart-section">
+                        <h2>Session Memory Over Time</h2>
+                        <div class="chart-wrapper-large">
+                            <canvas id="memoryTimeChart"></canvas>
+                        </div>
+                    </div>
+                    
+                    <div class="chart-section">
+                        <h2>Requests Completed Over Time</h2>
+                        <div class="chart-wrapper-large">
+                            <canvas id="requestsCompletedTimeChart"></canvas>
+                        </div>
+                    </div>
+                    
+                    <div class="chart-section">
+                        <h2>Requests Failed Over Time</h2>
+                        <div class="chart-wrapper-large">
+                            <canvas id="requestsFailedTimeChart"></canvas>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- ==================== METRICS VIEW ==================== -->
+                <div id="metricsView" class="view hidden">
+                    <div id="metricsContainer" class="metrics-container">
+                        <div class="placeholder">
+                            <p>Select an application to view metrics</p>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- ==================== SETTINGS VIEW ==================== -->
+                <div id="settingsView" class="view hidden">
+                    <div class="settings-container">
+                        <h2>⚙️ Settings</h2>
+                        
+                        <div class="settings-section">
+                            <h3>Trim Agent Settings</h3>
+                            <div class="settings-grid">
+                                <div class="form-group">
+                                    <label for="waitToFinish">Wait to Finish (ms)</label>
+                                    <input type="number" id="waitToFinish" value="120000" min="0" max="600000">
+                                    <small class="form-hint">Time to wait for agent to finish current requests</small>
+                                </div>
+                                <div class="form-group">
+                                    <label for="waitAfterStop">Wait After Stop (ms)</label>
+                                    <input type="number" id="waitAfterStop" value="60000" min="0" max="300000">
+                                    <small class="form-hint">Time to wait after stopping agent</small>
+                                </div>
+                            </div>
+                        </div>
+                        
+                        <div class="settings-section">
+                            <h3>Refresh Intervals (seconds)</h3>
+                            <div class="settings-grid">
+                                <div class="form-group">
+                                    <label for="agentsRefreshSec">Agents</label>
+                                    <input type="number" id="agentsRefreshSec" value="10" min="1" max="300">
+                                    <small class="form-hint">Auto-refresh interval for agents list</small>
+                                </div>
+                                <div class="form-group">
+                                    <label for="requestsRefreshSec">Requests</label>
+                                    <input type="number" id="requestsRefreshSec" value="5" min="1" max="60">
+                                    <small class="form-hint">Auto-refresh interval for running queries</small>
+                                </div>
+                                <div class="form-group">
+                                    <label for="chartsRefreshSec">Charts</label>
+                                    <input type="number" id="chartsRefreshSec" value="10" min="1" max="60">
+                                    <small class="form-hint">Auto-refresh interval for charts data</small>
+                                </div>
+                            </div>
+                        </div>
+                        
+                        <div class="settings-actions">
+                            <button class="btn btn-primary" id="saveSettingsBtn">Save Settings</button>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </main>
+
+        <!-- Status Bar -->
+        <footer class="status-bar">
+            <span id="connectionStatus">Not connected</span>
+            <span id="lastUpdate"></span>
+        </footer>
+
+        <!-- Properties Modal -->
+        <div id="propertiesModal" class="modal hidden">
+            <div class="modal-content modal-large">
+                <div class="modal-header">
+                    <h2>Agent Properties</h2>
+                    <button class="modal-close" id="closePropertiesModal">&times;</button>
+                </div>
+                <div class="modal-body" id="propertiesModalBody">
+                    <div class="loading">Loading properties...</div>
+                </div>
+                <div class="modal-footer">
+                    <button class="btn btn-secondary" id="cancelPropertiesBtn">Cancel</button>
+                    <button class="btn btn-primary" id="savePropertiesBtn">Save</button>
+                </div>
+            </div>
+        </div>
+
+        <!-- Context Menu for Agents -->
+        <div id="contextMenu" class="context-menu hidden">
+            <div class="context-menu-item" data-action="trimAgent">Trim Agent</div>
+            <div class="context-menu-item" data-action="enableABLObjects">Enable ABL Objects</div>
+            <div class="context-menu-item" data-action="disableABLObjects">Disable ABL Objects</div>
+            <div class="context-menu-item" data-action="getABLObjectsReport">Get ABL Objects Report</div>
+            <div class="context-menu-item" data-action="resetStatistics">Reset Statistics</div>
+        </div>
+
+        <!-- Context Menu for Requests -->
+        <div id="requestContextMenu" class="context-menu hidden">
+            <div class="context-menu-item" data-action="cancelRequest">Cancel Request</div>
+            <div class="context-menu-item" data-action="copyRequest">Copy Request</div>
+        </div>
+
+        <!-- Context Menu for Sessions -->
+        <div id="sessionContextMenu" class="context-menu hidden">
+            <div class="context-menu-item" data-action="terminateSession">Terminate Session</div>
+        </div>
+    </div>
+
+    <!-- ==================== HTML TEMPLATES ==================== -->
+    <!-- Templates are cloned by Templates.js and populated with data -->
+    
+    <!-- Agent Row Template -->
+    <template id="tmpl-agent-row">
+        <tr>
+            <td data-field="agentId"></td>
+            <td data-field="pid"></td>
+            <td data-field="state"></td>
+            <td data-field="sessions"></td>
+            <td>
+                <button class="btn btn-small btn-secondary action-btn">⋮</button>
+            </td>
+        </tr>
+    </template>
+    
+    <!-- Session Row Template -->
+    <template id="tmpl-session-row">
+        <tr>
+            <td data-field="sessionId"></td>
+            <td data-field="state"></td>
+            <td data-field="connectionId"></td>
+            <td data-field="requestCount"></td>
+            <td data-field="startTime"></td>
+        </tr>
+    </template>
+    
+    <!-- Request Row Template -->
+    <template id="tmpl-request-row">
+        <tr>
+            <td data-field="requestId" title="Request ID"></td>
+            <td data-field="sessionId" title="Session ID"></td>
+            <td data-field="url"></td>
+            <td data-field="state"></td>
+            <td data-field="elapsed"></td>
+            <td>
+                <button class="btn btn-small btn-danger cancel-btn">Cancel</button>
+            </td>
+        </tr>
+    </template>
+    
+    <!-- Property Row Template -->
+    <template id="tmpl-property-row">
+        <tr>
+            <td class="property-name" data-field="name"></td>
+            <td><input type="text" class="property-input" /></td>
+        </tr>
+    </template>
+    
+    <!-- Session Manager Metrics Template -->
+    <template id="tmpl-session-manager-metrics">
+        <div class="session-manager-metrics-grid">
+            <table><tbody></tbody></table>
+            <table><tbody></tbody></table>
+        </div>
+    </template>
+    
+    <!-- Threads Table Template -->
+    <template id="tmpl-threads-table">
+        <table class="data-grid">
+            <thead><tr>
+                <th>Thread ID</th>
+                <th>State</th>
+                <th>Start Time</th>
+                <th>End Time</th>
+            </tr></thead>
+            <tbody></tbody>
+        </table>
+    </template>
+    
+    <!-- Connections Table Template -->
+    <template id="tmpl-connections-table">
+        <table class="data-grid">
+            <thead><tr>
+                <th>Connection ID</th>
+                <th>State</th>
+                <th>Session ID</th>
+            </tr></thead>
+            <tbody></tbody>
+        </table>
+    </template>
+    
+    <!-- Metrics Requests Table Template -->
+    <template id="tmpl-metrics-requests-table">
+        <table class="data-grid metrics-requests-table">
+            <thead><tr>
+                <th>Request ID</th>
+                <th>Procedure Name</th>
+                <th>Session</th>
+                <th>Elapsed Time</th>
+                <th>Status</th>
+            </tr></thead>
+            <tbody></tbody>
+        </table>
+    </template>
+    
+    <!-- Agent Metrics Card Template -->
+    <template id="tmpl-agent-metrics-card">
+        <div class="agent-metric-card">
+            <div class="agent-metric-header">
+                <span class="collapse-icon">▼</span>
+                <span class="agent-id" data-field="agentId"></span>
+                <span class="agent-pid" data-field="pid"></span>
+                <span class="agent-state" data-field="state"></span>
+                <button class="btn btn-small btn-secondary reset-stats-btn">Reset Stats</button>
+            </div>
+            <div class="agent-metric-body expanded">
+                <h4>Status & Metrics Overview</h4>
+                <div class="metrics-overview-grid">
+                    <div class="metric-card">
+                        <div class="metric-label">Threads</div>
+                        <div class="metric-value" data-field="threads"></div>
+                    </div>
+                    <div class="metric-card">
+                        <div class="metric-label">Sessions</div>
+                        <div class="metric-value" data-field="sessions"></div>
+                    </div>
+                    <div class="metric-card">
+                        <div class="metric-label">Connections</div>
+                        <div class="metric-value" data-field="connections"></div>
+                    </div>
+                    <div class="metric-card">
+                        <div class="metric-label">Requests</div>
+                        <div class="metric-value" data-field="requests"></div>
+                    </div>
+                    <div class="metric-card">
+                        <div class="metric-label">CStack Memory</div>
+                        <div class="metric-value memory" data-field="cstackMemory"></div>
+                    </div>
+                    <div class="metric-card">
+                        <div class="metric-label">Overhead Memory</div>
+                        <div class="metric-value memory" data-field="overheadMemory"></div>
+                    </div>
+                    <div class="metric-card">
+                        <div class="metric-label">Active Threads</div>
+                        <div class="metric-value active" data-field="activeThreads"></div>
+                    </div>
+                    <div class="metric-card">
+                        <div class="metric-label">Active Sessions</div>
+                        <div class="metric-value active" data-field="activeSessions"></div>
+                    </div>
+                    <div class="metric-card">
+                        <div class="metric-label">Requests Completed</div>
+                        <div class="metric-value success" data-field="reqCompleted"></div>
+                    </div>
+                    <div class="metric-card">
+                        <div class="metric-label">Requests Failed</div>
+                        <div class="metric-value error" data-field="reqFailed"></div>
+                    </div>
+                    <div class="metric-card">
+                        <div class="metric-label">Requests Queued</div>
+                        <div class="metric-value" data-field="reqQueued"></div>
+                    </div>
+                </div>
+                
+                <h4>Duration Metrics</h4>
+                <div class="metrics-overview-grid">
+                    <div class="metric-card">
+                        <div class="metric-label">Total Request Duration</div>
+                        <div class="metric-value" data-field="totalReqDuration"></div>
+                    </div>
+                    <div class="metric-card">
+                        <div class="metric-label">Min Request Duration</div>
+                        <div class="metric-value" data-field="minReqDuration"></div>
+                    </div>
+                    <div class="metric-card">
+                        <div class="metric-label">Max Request Duration</div>
+                        <div class="metric-value" data-field="maxReqDuration"></div>
+                    </div>
+                    <div class="metric-card">
+                        <div class="metric-label">Avg Request Duration</div>
+                        <div class="metric-value" data-field="avgReqDuration"></div>
+                    </div>
+                </div>
+                
+                <div class="metrics-subsection">
+                    <h5>Threads</h5>
+                    <div data-section="threads"></div>
+                </div>
+                
+                <div class="metrics-subsection">
+                    <h5>Connections</h5>
+                    <div data-section="connections"></div>
+                </div>
+                
+                <div class="metrics-subsection hidden" data-section="requestsSection">
+                    <h5>Requests</h5>
+                    <div data-section="requests"></div>
+                </div>
+            </div>
+        </div>
+    </template>
+
+    <!-- Scripts - Load order matters: utils → templates → mixins → agentService → app -->
+    <script src="js/utils.js"></script>
+    <script src="js/templates.js"></script>
+    <script src="js/agentsView.js"></script>
+    <script src="js/chartsView.js"></script>
+    <script src="js/metricsView.js"></script>
+    <script src="js/agentService.js"></script>
+    <script src="js/app.js"></script>
+</body>
+</html>
