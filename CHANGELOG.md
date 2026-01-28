@@ -4,6 +4,22 @@ All notable changes to the OE Manager GUI webapp will be documented in this file
 
 Check [Keep a Changelog](http://keepachangelog.com/) for recommendations on how to structure this file.
 
+## [1.1.0] - 2026-01-28
+
+### Added
+- **Sessions & Agents Chart**: New chart showing Idle Sessions, Busy Sessions, and Stopping Agents over time
+- **Delta Values for Rate Charts**: Requests, Reads, and Writes charts now show per-interval values instead of cumulative counters
+
+### Changed
+- **PASOE Stats Layout**: Charts now display 2 per row for better visibility
+- **Memory Calculation**: Memory usage now correctly sums from all agent metrics (OverheadMemory + CStackMemory + SessionMemory)
+- **Connections Handling**: Fixed display of 0 values for connections (was showing as null)
+
+### Fixed
+- Fixed threads list not showing in Metrics view
+- Fixed memory always showing as null in PASOE Stats view
+- Fixed connections always showing as null when value was 0
+
 ## [1.0.0] - 2026-01-25
 
 ### Added

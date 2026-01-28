@@ -28,6 +28,7 @@ const MetricsViewMixin = {
                         const apiCalls = [
                             this.agentService.fetchAgentMetrics(this.selectedApplication, agentId),
                             this.agentService.fetchAgentConnections(this.selectedApplication, agentId),
+                            this.agentService.fetchAgentThreads(this.selectedApplication, agentId),
                         ];
                         
                         // Conditionally add requests API if toggle is checked

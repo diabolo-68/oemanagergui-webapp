@@ -1248,3 +1248,72 @@ body {
     border-radius: 4px;
     color: var(--accent-red);
 }
+
+/* ==================== PASOE STATS VIEW ==================== */
+
+.pasoe-stats-container {
+    display: flex;
+    flex-direction: column;
+    gap: 16px;
+    overflow: auto;
+    padding: 5px;
+    flex: 1;
+    min-height: 0;
+}
+
+.pasoe-stats-header {
+    padding: 10px 0;
+}
+
+.pasoe-stats-header h2 {
+    font-size: 14px;
+    font-weight: 500;
+    color: var(--text-primary);
+}
+
+.pasoe-stats-header h2 span {
+    color: var(--accent-blue);
+}
+
+.pasoe-stats-grid {
+    display: grid;
+    grid-template-columns: repeat(2, 1fr);
+    gap: 16px;
+}
+
+.pasoe-chart-small {
+    background-color: var(--bg-secondary);
+    border: 1px solid var(--border-color);
+    border-radius: 6px;
+    padding: 12px;
+}
+
+.pasoe-chart-small h3 {
+    font-size: 13px;
+    font-weight: 500;
+    color: var(--text-primary);
+    margin: 0 0 10px 0;
+    text-align: center;
+}
+
+.chart-wrapper-pasoe {
+    height: 220px;
+    position: relative;
+}
+
+.chart-wrapper-pasoe canvas {
+    height: 100% !important;
+}
+
+/* Responsive adjustments for PASOE Stats */
+@media (max-width: 1200px) {
+    .pasoe-stats-grid {
+        grid-template-columns: repeat(2, 1fr);
+    }
+}
+
+@media (max-width: 800px) {
+    .pasoe-stats-grid {
+        grid-template-columns: 1fr;
+    }
+}

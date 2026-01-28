@@ -274,6 +274,27 @@ class AgentService {
     }
 
     /**
+     * Fetch threads for a specific agent
+     */
+    async fetchAgentThreads(applicationName, agentId) {
+        const url = this.apiUrl(`/applications/${applicationName}/agents/${agentId}/threads`);
+        this.log('Fetching agent threads:', url);
+
+        const response = await fetch(url, {
+            method: 'GET',
+            headers: this.getHeaders()
+        });
+
+        if (!response.ok) {
+            throw new Error(`Failed to fetch agent threads: ${response.status} ${response.statusText}`);
+        }
+
+        const data = await response.json();
+        this.log('Agent threads response:', data);
+        return data.result?.AgentThread || [];
+    }
+
+    /**
      * Fetch agent properties
      */
     async fetchAgentProperties(applicationName) {

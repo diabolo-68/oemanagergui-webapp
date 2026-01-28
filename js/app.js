@@ -49,6 +49,9 @@ class OeManagerApp {
         this.metricsData = {};
         this.includeRequests = false;  // Toggle for including requests in metrics view
         
+        // PASOE Stats view state
+        this.pasoeStatsHistory = [];  // Time-series history for PASOE stats
+        
         // Properties modal state
         this.currentProperties = null;
         
@@ -57,12 +60,14 @@ class OeManagerApp {
         this.sessionsRefreshTimer = null;
         this.requestsRefreshTimer = null;
         this.chartsRefreshTimer = null;
+        this.pasoeStatsRefreshTimer = null;
         
         // Refresh intervals (seconds)
         this.refreshIntervals = {
             agents: this.config.agentsRefreshSec || 10,
             requests: this.config.requestsRefreshSec || 5,
-            charts: this.config.chartsRefreshSec || 10
+            charts: this.config.chartsRefreshSec || 10,
+            pasoeStats: this.config.pasoeStatsRefreshSec || 30
         };
         
         // Initialize UI
@@ -86,7 +91,8 @@ class OeManagerApp {
                     waitAfterStop: config.waitAfterStop || 60000,
                     agentsRefreshSec: config.agentsRefreshSec || 10,
                     requestsRefreshSec: config.requestsRefreshSec || 5,
-                    chartsRefreshSec: config.chartsRefreshSec || 10
+                    chartsRefreshSec: config.chartsRefreshSec || 10,
+                    pasoeStatsRefreshSec: config.pasoeStatsRefreshSec || 30
                 };
             }
         } catch (e) {
@@ -99,7 +105,8 @@ class OeManagerApp {
             waitAfterStop: 60000,
             agentsRefreshSec: 10,
             requestsRefreshSec: 5,
-            chartsRefreshSec: 10
+            chartsRefreshSec: 10,
+            pasoeStatsRefreshSec: 30
         };
     }
 
@@ -132,7 +139,8 @@ class OeManagerApp {
             waitAfterStop: this.config.waitAfterStop,
             agentsRefreshSec: this.refreshIntervals.agents,
             requestsRefreshSec: this.refreshIntervals.requests,
-            chartsRefreshSec: this.refreshIntervals.charts
+            chartsRefreshSec: this.refreshIntervals.charts,
+            pasoeStatsRefreshSec: this.refreshIntervals.pasoeStats
         };
         localStorage.setItem('oemanager.config', JSON.stringify(toStore));
     }
@@ -363,6 +371,16 @@ class OeManagerApp {
                 case 'metrics':
                     this.loadMetricsData();
                     break;
+                case 'pasoeStats':
+                    // Update application name in header
+                    const appNameSpan = document.getElementById('pasoeStatsAppName');
+                    if (appNameSpan) {
+                        appNameSpan.textContent = this.selectedApplication;
+                    }
+                    this.initPasoeStatsCharts();
+                    this.loadPasoeStatsData();
+                    this.startPasoeStatsAutoRefresh();
+                    break;
             }
         }
     }
@@ -394,6 +412,7 @@ class OeManagerApp {
         document.getElementById('agentsRefreshSec').value = this.refreshIntervals.agents;
         document.getElementById('requestsRefreshSec').value = this.refreshIntervals.requests;
         document.getElementById('chartsRefreshSec').value = this.refreshIntervals.charts;
+        document.getElementById('pasoeStatsRefreshSec').value = this.refreshIntervals.pasoeStats;
     }
 
     /**
@@ -408,6 +427,7 @@ class OeManagerApp {
         this.refreshIntervals.agents = parseInt(document.getElementById('agentsRefreshSec').value) || 10;
         this.refreshIntervals.requests = parseInt(document.getElementById('requestsRefreshSec').value) || 5;
         this.refreshIntervals.charts = parseInt(document.getElementById('chartsRefreshSec').value) || 10;
+        this.refreshIntervals.pasoeStats = parseInt(document.getElementById('pasoeStatsRefreshSec').value) || 30;
 
         // Save to localStorage
         this.saveConfig();
@@ -497,6 +517,9 @@ class OeManagerApp {
         
         // Clear chart history data
         this.chartHistoryData.clear();
+        
+        // Clear PASOE stats history
+        this.clearPasoeStatsHistory();
         
         // Destroy existing chart instances to reset them
         this.destroyCharts();
@@ -696,11 +719,26 @@ class OeManagerApp {
         }
     }
 
+    startPasoeStatsAutoRefresh() {
+        this.stopPasoeStatsAutoRefresh();
+        if (this.refreshIntervals.pasoeStats > 0) {
+            this.pasoeStatsRefreshTimer = setInterval(() => this.loadPasoeStatsData(), this.refreshIntervals.pasoeStats * 1000);
+        }
+    }
+
+    stopPasoeStatsAutoRefresh() {
+        if (this.pasoeStatsRefreshTimer) {
+            clearInterval(this.pasoeStatsRefreshTimer);
+            this.pasoeStatsRefreshTimer = null;
+        }
+    }
+
     stopAllTimers() {
         this.stopAgentsAutoRefresh();
         this.stopSessionsAutoRefresh();
         this.stopRequestsAutoRefresh();
         this.stopChartsAutoRefresh();
+        this.stopPasoeStatsAutoRefresh();
     }
 }
 
@@ -710,6 +748,7 @@ class OeManagerApp {
 Object.assign(OeManagerApp.prototype, AgentsViewMixin);
 Object.assign(OeManagerApp.prototype, ChartsViewMixin);
 Object.assign(OeManagerApp.prototype, MetricsViewMixin);
+Object.assign(OeManagerApp.prototype, PasoeStatsViewMixin);
 
 // ==================== INITIALIZE APP ====================
 

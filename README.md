@@ -7,6 +7,7 @@ Web-based management interface for OpenEdge PASOE agents and sessions. This is a
 - **Agents View**: Monitor and manage PASOE agents with real-time session and request tracking
 - **Charts View**: Visualize memory usage and request statistics over time
 - **Metrics View**: Display SessionManager metrics and per-agent statistics
+- **PASOE Stats View**: Time-series charts for PASOE performance metrics (memory, connections, requests, reads/writes)
 - **Settings View**: Configure trim agent settings and refresh intervals
 
 ### Agent Management
@@ -44,6 +45,21 @@ Web-based management interface for OpenEdge PASOE agents and sessions. This is a
 - SessionManager metrics (sessions, requests, memory)
 - Per-agent metrics with reset capability
 - Real-time updates
+
+### PASOE Stats
+
+![PASOE Stats View 1](resources/pasoe-charts-view-1.png)
+
+![PASOE Stats View 2](resources/pasoe-charts-view-2.png)
+
+- Memory usage over time (MiB)
+- Connections chart (Current vs Maximum)
+- Requests, Timeouts, and Waits (delta values per interval)
+- Reads and Read Errors (delta values per interval)
+- Writes and Write Errors (delta values per interval)
+- Sessions & Agents (Idle Sessions, Busy Sessions, Stopping Agents)
+- Auto-refresh with configurable interval (default: 30 seconds)
+- 2-column responsive layout
 
 ## Requirements
 
@@ -107,6 +123,7 @@ Click the **Settings** tab in the sidebar to configure:
 | Agents Refresh | Auto-refresh interval for agents list (seconds) | 10 |
 | Requests Refresh | Auto-refresh interval for requests (seconds) | 5 |
 | Charts Refresh | Auto-refresh interval for charts (seconds) | 10 |
+| PASOE Stats Refresh | Auto-refresh interval for PASOE stats (seconds) | 30 |
 
 ## Usage
 
@@ -138,6 +155,7 @@ Switch between views using the sidebar:
 - **Agents** - Agent/Session/Request management
 - **Charts** - Memory and request charts
 - **Metrics** - SessionManager and agent metrics
+- **PASOE Stats** - Performance metrics over time (memory, connections, requests, I/O)
 - **Settings** - Configure refresh intervals and trim settings
 
 ## Architecture
