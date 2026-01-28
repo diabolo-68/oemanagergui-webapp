@@ -300,8 +300,8 @@ const Templates = {
             row.innerHTML = `
                 <td>${thread.ThreadId || '-'}</td>
                 <td>${thread.ThreadState || '-'}</td>
-                <td>${thread.StartTime ? new Date(thread.StartTime).toLocaleString() : '-'}</td>
-                <td>${thread.EndTime ? new Date(thread.EndTime).toLocaleString() : '-'}</td>
+                <td>${Utils.formatIsoDate(thread.StartTime)}</td>
+                <td>${Utils.formatIsoDate(thread.EndTime)}</td>
             `;
             tbody.appendChild(row);
         });

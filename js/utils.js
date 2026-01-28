@@ -8,12 +8,60 @@
  */
 class Utils {
     /**
+     * Parse ISO date string from PASOE API, normalizing non-standard timezone offsets.
+     * PASOE returns timezone offsets like "-00:00" which some browsers don't handle correctly.
+     * This function normalizes "-00:00" to "Z" (UTC) for proper parsing.
+     * @param {string} dateString - ISO date string from PASOE API
+     * @returns {Date|null} - Parsed Date object or null if invalid
+     */
+    static parseIsoDate(dateString) {
+        if (!dateString) return null;
+        try {
+            // Normalize "-00:00" to "Z" (both mean UTC, but "-00:00" is non-standard)
+            let normalized = dateString;
+            if (typeof dateString === 'string' && dateString.endsWith('-00:00')) {
+                normalized = dateString.slice(0, -6) + 'Z';
+            }
+            const date = new Date(normalized);
+            return isNaN(date.getTime()) ? null : date;
+        } catch (e) {
+            return null;
+        }
+    }
+
+    /**
+     * Format ISO date string from PASOE API to locale string.
+     * Displays the date/time as it appears in the API response (server time),
+     * WITHOUT converting to browser's local timezone.
+     * @param {string} dateString - ISO date string from PASOE API (e.g., "2026-01-28T22:43:23.910-01:00")
+     * @returns {string} - Formatted date string showing server time, or '-' if invalid
+     */
+    static formatIsoDate(dateString) {
+        if (!dateString) return '-';
+        try {
+            // Parse the ISO string directly to extract date/time components as they appear
+            // Format: "2026-01-28T22:43:23.910-01:00" or "2026-01-28T22:43:23.910+01:00"
+            const match = dateString.match(/^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2}):(\d{2})/);
+            if (!match) return '-';
+            
+            const [, year, month, day, hours, minutes, seconds] = match;
+            
+            // Format as locale-friendly string (M/D/YYYY, HH:MM:SS)
+            const monthNum = parseInt(month, 10);
+            const dayNum = parseInt(day, 10);
+            return `${monthNum}/${dayNum}/${year}, ${hours}:${minutes}:${seconds}`;
+        } catch (e) {
+            return '-';
+        }
+    }
+
+    /**
      * Format timestamp to locale time string
      */
     static formatTimestamp(timestamp) {
         if (!timestamp) return '-';
         try {
-            const date = new Date(timestamp);
+            const date = Utils.parseIsoDate(timestamp) || new Date(timestamp);
             return date.toLocaleTimeString();
         } catch (e) {
             return timestamp;

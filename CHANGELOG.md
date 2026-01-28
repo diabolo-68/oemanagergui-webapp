@@ -4,6 +4,11 @@ All notable changes to the OE Manager GUI webapp will be documented in this file
 
 Check [Keep a Changelog](http://keepachangelog.com/) for recommendations on how to structure this file.
 
+## [1.1.1] - 2026-01-28
+
+### Fixed
+- **Thread Times Display**: Fixed Start Time and End Time in Metrics view showing times converted to browser timezone instead of server time. Dates are now displayed exactly as returned by the PASOE API.
+
 ## [1.1.0] - 2026-01-28
 
 ### Added
