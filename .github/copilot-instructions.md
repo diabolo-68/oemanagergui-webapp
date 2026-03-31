@@ -574,19 +574,30 @@ Stored in localStorage (except password):
 ## File Structure
 
 ```
-oemanagergui-java/
+oemanagergui-webapp/
 ├── index.html              # Main SPA
 ├── css/
 │   └── style.css           # Dark theme styling
 ├── js/
-│   ├── agentService.js     # API wrapper (~450 lines)
-│   └── app.js              # Main app class (~1500 lines)
+│   ├── agentService.js     # API wrapper
+│   ├── app.js              # Main application class
+│   ├── agentsView.js       # Agents view mixin
+│   ├── chartsView.js       # Charts view mixin
+│   ├── metricsView.js      # Metrics view mixin
+│   ├── pasoeStatsView.js   # PASOE Stats view mixin
+│   ├── templates.js        # HTML template functions
+│   └── utils.js            # Shared utility functions
 ├── WEB-INF/
 │   └── web.xml             # Servlet config
 ├── pom.xml                 # Maven build
-├── README.md               # Project documentation
+├── CLAUDE.md               # AI agent context
+├── AGENTS.md               # Agent definitions summary
 └── .github/
-    └── copilot-instructions.md  # This file
+    ├── copilot-instructions.md  # This file
+    ├── agents/             # Custom Copilot agents
+    ├── instructions/       # File-specific instructions
+    ├── prompts/            # Reusable prompt templates
+    └── skills/             # On-demand skill workflows
 ```
 
 ## Debugging
