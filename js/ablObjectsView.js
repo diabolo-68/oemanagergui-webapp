@@ -39,6 +39,13 @@ const AblObjectsViewMixin = {
     async loadAblObjectsView() {
         if (!this.selectedApplication) return;
         await this.loadAblAgents();
+
+        // Auto-load today's access log if not already loaded
+        // (matches VS Code extension behavior)
+        if (!this.ablAccessLogData && !this._ablAutoLoadAttempted) {
+            this._ablAutoLoadAttempted = true;
+            this.ablAutoLoadAccessLog();
+        }
     },
 
     /**
@@ -953,6 +960,93 @@ const AblObjectsViewMixin = {
     updateAblStatusMessage(message) {
         const el = document.getElementById('ablStatusMessage');
         if (el) el.textContent = message;
+    },
+
+    // ==================== AUTO-LOAD ACCESS LOG ====================
+
+    /**
+     * Auto-load access log from the PASOE server for ABL Objects consolidation.
+     */
+    async ablAutoLoadAccessLog() {
+        const dateInput = document.getElementById('ablAutoLoadDate');
+        const date = dateInput?.value;
+        const statusEl = document.getElementById('ablAccessLogStatus');
+
+        if (!date) {
+            Utils.showToast('Please select a date', 'error');
+            return;
+        }
+
+        const pasoePath = this.getEffectivePasoePath();
+        if (!pasoePath) {
+            Utils.showToast('PASOE path not available. Check Settings → PASOE Instance.', 'error');
+            return;
+        }
+
+        if (!this.selectedApplication) {
+            Utils.showToast('Please select an application first.', 'error');
+            return;
+        }
+
+        if (statusEl) { statusEl.textContent = 'Reading properties...'; }
+
+        try {
+            const pasoePathOption = this.getPasoePathOption();
+
+            // Read openedge.properties to find log directory
+            const propsResult = await this.agentService.readServerFile('conf/openedge.properties', {
+                pasoePathOverride: pasoePathOption
+            });
+
+            const logPaths = this.logFileService.parsePropertiesContent(propsResult.content, pasoePath);
+            const agentLogTemplate = logPaths.get(this.selectedApplication);
+
+            // Derive access log path from agent log directory
+            let accessLogRelPath;
+            if (agentLogTemplate) {
+                const agentLogPath = this.logFileService.resolveAgentLogPath(agentLogTemplate, date);
+                const logDir = this.logFileService.getLogDirectory(agentLogPath);
+                const accessLogPath = logDir + '/localhost-access.' + date + '.log';
+                accessLogRelPath = this.logFileService.toRelativePath(accessLogPath, pasoePath);
+            } else {
+                // Fallback: try standard Tomcat logs directory
+                accessLogRelPath = 'logs/localhost-access.' + date + '.log';
+            }
+
+            if (statusEl) { statusEl.textContent = 'Loading access log...'; }
+
+            const result = await this.agentService.readServerFile(accessLogRelPath, {
+                pasoePathOverride: pasoePathOption
+            });
+
+            if (!result.content) {
+                Utils.showToast('Access log file is empty or not found', 'warning');
+                if (statusEl) { statusEl.textContent = 'No data found'; }
+                return;
+            }
+
+            // Parse using the same parser as file upload
+            const entries = this.logFileService.parseAccessLog(result.content);
+            this.ablAccessLogData = entries;
+            const fileName = accessLogRelPath.split(/[\\/]/).pop();
+            this.ablAccessLogFileName = fileName;
+
+            // Enable consolidate button if we also have a report
+            const consolidateBtn = document.getElementById('ablConsolidateBtn');
+            if (consolidateBtn && this.ablObjectsReport) {
+                consolidateBtn.disabled = false;
+            }
+
+            if (statusEl) {
+                statusEl.textContent = `${fileName} — ${entries.length.toLocaleString()} entries (auto-loaded)`;
+            }
+            Utils.showToast(`Access log loaded: ${entries.length} entries`, 'success');
+
+        } catch (e) {
+            console.error('ABL auto-load access log failed:', e);
+            Utils.showToast(`Failed to load access log: ${e.message}`, 'error');
+            if (statusEl) { statusEl.textContent = 'Load failed'; }
+        }
     }
 };
 

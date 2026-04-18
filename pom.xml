@@ -14,17 +14,39 @@
 
     <properties>
         <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
+        <maven.compiler.source>11</maven.compiler.source>
+        <maven.compiler.target>11</maven.compiler.target>
     </properties>
 
+    <dependencies>
+        <dependency>
+            <groupId>jakarta.servlet</groupId>
+            <artifactId>jakarta.servlet-api</artifactId>
+            <version>6.0.0</version>
+            <scope>provided</scope>
+        </dependency>
+    </dependencies>
+
     <build>
+        <sourceDirectory>src/main/java</sourceDirectory>
         <plugins>
+            <!-- Java Compiler -->
+            <plugin>
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-compiler-plugin</artifactId>
+                <version>3.11.0</version>
+                <configuration>
+                    <source>11</source>
+                    <target>11</target>
+                </configuration>
+            </plugin>
+
             <!-- Maven WAR Plugin - Package static webapp as WAR -->
             <plugin>
                 <groupId>org.apache.maven.plugins</groupId>
                 <artifactId>maven-war-plugin</artifactId>
                 <version>3.4.0</version>
                 <configuration>
-                    <!-- Static webapp - no Java classes -->
                     <failOnMissingWebXml>false</failOnMissingWebXml>
                     
                     <!-- Project root is the webapp source -->
@@ -36,6 +58,7 @@
                     <!-- Exclude non-webapp files -->
                     <packagingExcludes>
                         pom.xml,
+                        src/**,
                         target/**,
                         .git/**,
                         .github/**,

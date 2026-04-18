@@ -1579,3 +1579,605 @@ tr.abl-unmatched td {
         grid-template-columns: 1fr;
     }
 }
+
+/* ======================================================
+   LOGFILES ANALYZER VIEW
+   ====================================================== */
+
+.logfiles-container {
+    display: flex;
+    flex-direction: column;
+    height: 100%;
+    overflow: hidden;
+}
+
+/* ── Toolbar ── */
+
+.log-toolbar {
+    display: flex;
+    align-items: center;
+    gap: 16px;
+    padding: 6px 12px;
+    border-bottom: 1px solid var(--border-color);
+    background: var(--bg-secondary);
+    flex-shrink: 0;
+    flex-wrap: wrap;
+}
+
+.log-toolbar-left {
+    display: flex;
+    gap: 16px;
+    align-items: center;
+    flex-wrap: wrap;
+}
+
+.log-toolbar-right {
+    display: flex;
+    gap: 8px;
+    align-items: center;
+    margin-left: auto;
+}
+
+.log-file-group {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+}
+
+.log-file-label {
+    font-size: 12px;
+    color: var(--text-secondary);
+    white-space: nowrap;
+}
+
+.log-file-input {
+    font-size: 12px;
+    max-width: 200px;
+    color: var(--text-primary);
+    display: none; /* Hidden — auto-load from server is primary workflow */
+}
+
+.log-file-status {
+    font-size: 12px;
+    color: var(--text-primary);
+    white-space: nowrap;
+    max-width: 400px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    font-weight: 500;
+}
+
+.log-entry-count {
+    font-size: 12px;
+    color: var(--text-secondary);
+    white-space: nowrap;
+}
+
+.log-auto-toolbar {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 4px 12px;
+    border-bottom: 1px solid var(--border-color);
+    background: var(--bg-secondary);
+    flex-shrink: 0;
+}
+
+.log-auto-toolbar .log-date-input {
+    padding: 2px 6px;
+    font-size: 12px;
+    background: var(--bg-primary);
+    color: var(--text-primary);
+    border: 1px solid var(--border-color);
+    border-radius: 3px;
+}
+
+.log-auto-toolbar .log-auto-status {
+    font-size: 11px;
+    color: var(--text-secondary);
+    margin-left: 4px;
+}
+
+.log-auto-refresh-label {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    font-size: 12px;
+    color: var(--text-secondary);
+    cursor: pointer;
+}
+
+.log-badge {
+    font-size: 11px;
+    padding: 1px 6px;
+    border-radius: 8px;
+    background: var(--accent-blue);
+    color: #fff;
+    cursor: pointer;
+}
+
+.log-badge.hidden {
+    display: none;
+}
+
+/* ── Filter bar ── */
+
+.log-filter-bar {
+    display: flex;
+    align-items: flex-end;
+    gap: 8px;
+    padding: 4px 12px;
+    border-bottom: 1px solid var(--border-color);
+    background: var(--bg-secondary);
+    flex-shrink: 0;
+    flex-wrap: wrap;
+}
+
+.log-filter-group {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+}
+
+.log-filter-group label {
+    font-size: 10px;
+    color: var(--text-secondary);
+    text-transform: uppercase;
+}
+
+.log-filter-group select,
+.log-filter-group input {
+    font-size: 12px;
+    padding: 2px 4px;
+    background: var(--bg-input, var(--bg-tertiary));
+    color: var(--text-primary);
+    border: 1px solid var(--border-color);
+    border-radius: 3px;
+}
+
+.log-filter-group select {
+    min-width: 60px;
+}
+
+.log-filter-input {
+    width: 80px;
+}
+
+.log-filter-search-group {
+    flex: 1;
+    min-width: 100px;
+}
+
+.log-filter-search-group .log-filter-input {
+    width: 100%;
+}
+
+/* ── Log table ── */
+
+.log-table-wrapper {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+    min-height: 100px;
+}
+
+.log-table-header {
+    display: grid;
+    grid-template-columns: 30px 180px 100px 50px 70px 100px 60px 80px 1fr;
+    gap: 0;
+    padding: 2px 0;
+    border-bottom: 1px solid var(--border-color);
+    background: var(--bg-secondary);
+    font-size: 11px;
+    color: var(--text-secondary);
+    text-transform: uppercase;
+    flex-shrink: 0;
+}
+
+.log-table-header > div {
+    padding: 2px 4px;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+.log-col-duration {
+    cursor: pointer;
+    user-select: none;
+}
+
+.log-col-duration:hover {
+    color: var(--text-primary);
+}
+
+.log-scroll-container {
+    flex: 1;
+    overflow-y: auto;
+    overflow-x: hidden;
+    position: relative;
+    background: var(--bg-primary);
+}
+
+.log-row {
+    display: grid;
+    grid-template-columns: 30px 180px 100px 50px 70px 100px 60px 80px 1fr;
+    gap: 0;
+    height: 24px;
+    line-height: 24px;
+    font-size: 12px;
+    font-family: Consolas, Monaco, 'Courier New', monospace;
+    color: var(--text-primary);
+    border-bottom: 1px solid rgba(255, 255, 255, 0.03);
+}
+
+.log-row > div {
+    padding: 0 4px;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+.log-row:hover {
+    background: var(--bg-tertiary);
+}
+
+.log-row.type-error {
+    color: var(--accent-red, #f48771);
+}
+
+.log-row.type-warning {
+    color: var(--accent-yellow, #ddb100);
+}
+
+.log-row.status-5xx {
+    color: var(--accent-red, #f48771);
+}
+
+.log-row.status-4xx {
+    color: var(--accent-yellow, #ddb100);
+}
+
+.log-row.highlighted {
+    background: rgba(55, 148, 255, 0.15);
+}
+
+.source-icon {
+    font-size: 10px;
+}
+
+.source-agent {
+    color: #3794ff;
+}
+
+.source-access {
+    color: #89d185;
+}
+
+.request-id-cell {
+    color: var(--accent-blue);
+    cursor: pointer;
+    text-decoration: underline;
+}
+
+.request-id-cell:hover {
+    color: #fff;
+}
+
+.message-cell {
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+.log-placeholder {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    height: 100%;
+    color: var(--text-secondary);
+    font-size: 14px;
+    text-align: center;
+    padding: 40px;
+}
+
+/* ── Correlation panel ── */
+
+.log-correlation-panel {
+    border-top: 1px solid var(--border-color);
+    background: var(--bg-secondary);
+    max-height: 0;
+    overflow: hidden;
+    transition: max-height 0.3s ease-out;
+    flex-shrink: 0;
+}
+
+.log-correlation-panel.open {
+    max-height: 250px;
+    overflow-y: auto;
+}
+
+.log-correlation-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 4px 12px;
+    border-bottom: 1px solid var(--border-color);
+    font-size: 12px;
+    color: var(--text-secondary);
+}
+
+.log-correlation-entries {
+    padding: 4px 12px;
+    font-size: 12px;
+    font-family: Consolas, Monaco, monospace;
+}
+
+.correlation-entry {
+    padding: 2px 0;
+    border-bottom: 1px solid rgba(255, 255, 255, 0.03);
+    display: flex;
+    gap: 8px;
+    align-items: baseline;
+}
+
+.correlation-entry .entry-source {
+    font-size: 10px;
+    font-weight: bold;
+    min-width: 44px;
+}
+
+.correlation-entry.source-agent .entry-source {
+    color: #3794ff;
+}
+
+.correlation-entry.source-access .entry-source {
+    color: #89d185;
+}
+
+.correlation-entry .entry-time {
+    color: var(--text-secondary);
+    font-size: 11px;
+    min-width: 200px;
+}
+
+.correlation-entry .entry-detail {
+    color: var(--text-primary);
+    flex: 1;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+/* ── Resizer ── */
+
+.log-resizer {
+    height: 4px;
+    background: var(--border-color);
+    cursor: ns-resize;
+    flex-shrink: 0;
+}
+
+.log-resizer:hover,
+.log-resizer.dragging {
+    background: var(--accent-blue);
+}
+
+/* ── Bottom panel ── */
+
+.log-bottom-panel {
+    height: 300px;
+    display: flex;
+    flex-direction: column;
+    background: var(--bg-primary);
+    border-top: 1px solid var(--border-color);
+    flex-shrink: 0;
+    overflow: hidden;
+}
+
+.log-bottom-tabs {
+    display: flex;
+    gap: 0;
+    border-bottom: 1px solid var(--border-color);
+    flex-shrink: 0;
+}
+
+.log-bottom-tab {
+    padding: 4px 12px;
+    font-size: 12px;
+    color: var(--text-secondary);
+    background: transparent;
+    border: none;
+    border-bottom: 2px solid transparent;
+    cursor: pointer;
+}
+
+.log-bottom-tab:hover {
+    color: var(--text-primary);
+}
+
+.log-bottom-tab.active {
+    color: var(--text-primary);
+    border-bottom-color: var(--accent-blue);
+}
+
+.log-empty-state {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    height: 100%;
+    color: var(--text-secondary);
+    font-size: 13px;
+}
+
+/* ── Gantt chart ── */
+
+.log-gantt-section {
+    flex: 1;
+    overflow-y: auto;
+    padding: 4px 8px;
+}
+
+.log-gantt-chart {
+    position: relative;
+}
+
+.log-gantt-time-axis {
+    position: relative;
+    height: 20px;
+    border-bottom: 1px solid var(--border-color);
+    margin-bottom: 4px;
+}
+
+.log-gantt-time-axis-labels {
+    position: relative;
+    height: 100%;
+}
+
+.log-gantt-hour-label {
+    position: absolute;
+    font-size: 10px;
+    color: var(--text-secondary);
+    transform: translateX(-50%);
+    bottom: 2px;
+}
+
+.log-gantt-rows {
+    position: relative;
+}
+
+.log-gantt-row {
+    display: flex;
+    align-items: center;
+    height: 22px;
+    margin-bottom: 1px;
+}
+
+.log-gantt-pid-label {
+    width: 120px;
+    min-width: 120px;
+    font-size: 11px;
+    color: var(--text-secondary);
+    text-align: right;
+    padding-right: 8px;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+.log-gantt-bar-area {
+    flex: 1;
+    position: relative;
+    height: 100%;
+}
+
+.log-gantt-grid-line {
+    position: absolute;
+    top: 0;
+    bottom: 0;
+    width: 1px;
+    background: rgba(255, 255, 255, 0.05);
+}
+
+.log-gantt-bar {
+    position: absolute;
+    top: 3px;
+    height: 16px;
+    border-radius: 2px;
+    min-width: 2px;
+    cursor: pointer;
+    opacity: 0.9;
+}
+
+.log-gantt-bar:hover {
+    opacity: 1;
+    outline: 1px solid #fff;
+}
+
+.log-gantt-tooltip {
+    position: fixed;
+    z-index: 1000;
+    background: var(--bg-tertiary);
+    border: 1px solid var(--border-color);
+    border-radius: 4px;
+    padding: 6px 10px;
+    font-size: 12px;
+    color: var(--text-primary);
+    pointer-events: none;
+    white-space: nowrap;
+}
+
+/* ── Flame chart / Waterfall ── */
+
+.log-waterfall-section {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+}
+
+.log-waterfall-controls {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    padding: 4px 8px;
+    border-bottom: 1px solid var(--border-color);
+    flex-shrink: 0;
+    flex-wrap: wrap;
+}
+
+.log-waterfall-legend {
+    display: flex;
+    gap: 10px;
+    font-size: 11px;
+    color: var(--text-secondary);
+}
+
+.log-legend-item {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+}
+
+.log-legend-swatch {
+    display: inline-block;
+    width: 12px;
+    height: 12px;
+    border-radius: 2px;
+}
+
+.log-waterfall-info {
+    font-size: 11px;
+    color: var(--text-secondary);
+}
+
+.log-waterfall-paging {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    font-size: 11px;
+    color: var(--text-secondary);
+}
+
+.log-waterfall-container {
+    flex: 1;
+    position: relative;
+    overflow: hidden;
+}
+
+.log-waterfall-container canvas {
+    display: block;
+}
+
+.log-flame-tooltip {
+    position: fixed;
+    z-index: 1000;
+    background: var(--bg-tertiary);
+    border: 1px solid var(--border-color);
+    border-radius: 4px;
+    padding: 6px 10px;
+    font-size: 12px;
+    color: var(--text-primary);
+    pointer-events: none;
+    max-width: 500px;
+    white-space: nowrap;
+}

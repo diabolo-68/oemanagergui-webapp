@@ -75,7 +75,8 @@ class OeManagerApp {
             agents: this.config.agentsRefreshSec || 10,
             requests: this.config.requestsRefreshSec || 5,
             charts: this.config.chartsRefreshSec || 10,
-            pasoeStats: this.config.pasoeStatsRefreshSec || 30
+            pasoeStats: this.config.pasoeStatsRefreshSec || 30,
+            logs: this.config.logRefreshSec || 5
         };
         
         // Initialize UI
@@ -100,7 +101,9 @@ class OeManagerApp {
                     agentsRefreshSec: config.agentsRefreshSec || 10,
                     requestsRefreshSec: config.requestsRefreshSec || 5,
                     chartsRefreshSec: config.chartsRefreshSec || 10,
-                    pasoeStatsRefreshSec: config.pasoeStatsRefreshSec || 30
+                    pasoeStatsRefreshSec: config.pasoeStatsRefreshSec || 30,
+                    logRefreshSec: config.logRefreshSec || 5,
+                    pasoePathOverride: config.pasoePathOverride || ''
                 };
             }
         } catch (e) {
@@ -114,7 +117,9 @@ class OeManagerApp {
             agentsRefreshSec: 10,
             requestsRefreshSec: 5,
             chartsRefreshSec: 10,
-            pasoeStatsRefreshSec: 30
+            pasoeStatsRefreshSec: 30,
+            logRefreshSec: 5,
+            pasoePathOverride: ''
         };
     }
 
@@ -148,7 +153,9 @@ class OeManagerApp {
             agentsRefreshSec: this.refreshIntervals.agents,
             requestsRefreshSec: this.refreshIntervals.requests,
             chartsRefreshSec: this.refreshIntervals.charts,
-            pasoeStatsRefreshSec: this.refreshIntervals.pasoeStats
+            pasoeStatsRefreshSec: this.refreshIntervals.pasoeStats,
+            logRefreshSec: this.refreshIntervals.logs,
+            pasoePathOverride: this.config.pasoePathOverride || ''
         };
         localStorage.setItem('oemanager.config', JSON.stringify(toStore));
     }
@@ -196,6 +203,7 @@ class OeManagerApp {
 
         // Settings view save button
         document.getElementById('saveSettingsBtn')?.addEventListener('click', () => this.saveSettings());
+        document.getElementById('detectPasoePathBtn')?.addEventListener('click', () => this.detectPasoePath());
 
         // Application selector
         document.getElementById('applicationSelect')?.addEventListener('change', (e) => {
@@ -244,6 +252,12 @@ class OeManagerApp {
                 this.handleAccessLogFile(e.target.files[0]);
             }
         });
+        document.getElementById('ablBtnAutoLoadAccessLog')?.addEventListener('click', () => this.ablAutoLoadAccessLog());
+
+        // Set default date for ABL auto-load
+        const ablDateInput = document.getElementById('ablAutoLoadDate');
+        if (ablDateInput) { ablDateInput.value = new Date().toISOString().split('T')[0]; }
+
         document.getElementById('ablConsolidateBtn')?.addEventListener('click', () => this.consolidateData());
         document.getElementById('ablExportCsvBtn')?.addEventListener('click', () => this.exportConsolidatedCsv());
 
@@ -384,6 +398,12 @@ class OeManagerApp {
             return;
         }
 
+        // Handle logfiles view (always available, no connection needed)
+        if (viewName === 'logfiles') {
+            this.loadLogfilesView();
+            return;
+        }
+
         // Start appropriate timers and load data
         if (this.isConnected && this.selectedApplication) {
             switch (viewName) {
@@ -448,6 +468,9 @@ class OeManagerApp {
         document.getElementById('requestsRefreshSec').value = this.refreshIntervals.requests;
         document.getElementById('chartsRefreshSec').value = this.refreshIntervals.charts;
         document.getElementById('pasoeStatsRefreshSec').value = this.refreshIntervals.pasoeStats;
+        document.getElementById('logRefreshSec').value = this.refreshIntervals.logs;
+        document.getElementById('pasoePathOverride').value = this.config.pasoePathOverride || '';
+        this.detectPasoePath();
     }
 
     /**
@@ -463,11 +486,53 @@ class OeManagerApp {
         this.refreshIntervals.requests = parseInt(document.getElementById('requestsRefreshSec').value) || 5;
         this.refreshIntervals.charts = parseInt(document.getElementById('chartsRefreshSec').value) || 10;
         this.refreshIntervals.pasoeStats = parseInt(document.getElementById('pasoeStatsRefreshSec').value) || 30;
+        this.refreshIntervals.logs = parseInt(document.getElementById('logRefreshSec').value) || 5;
+
+        // Update PASOE path override
+        this.config.pasoePathOverride = document.getElementById('pasoePathOverride').value.trim();
 
         // Save to localStorage
         this.saveConfig();
         
         Utils.showToast('Settings saved', 'success');
+    }
+
+    /**
+     * Detect PASOE path from the servlet (catalina.base).
+     * Updates the read-only detected path field in settings.
+     */
+    async detectPasoePath() {
+        const detectedInput = document.getElementById('pasoeDetectedPath');
+        try {
+            const info = await this.agentService.getPasoeInfo();
+            this.detectedPasoePath = info.catalinaBase || '';
+            if (detectedInput) {
+                detectedInput.value = this.detectedPasoePath || '(not detected)';
+            }
+        } catch (e) {
+            console.warn('Could not detect PASOE path:', e.message);
+            this.detectedPasoePath = '';
+            if (detectedInput) {
+                detectedInput.value = '(detection failed)';
+            }
+        }
+    }
+
+    /**
+     * Get the effective PASOE path — user override takes priority over auto-detected.
+     * @returns {string} PASOE path, or empty string if none available
+     */
+    getEffectivePasoePath() {
+        return this.config.pasoePathOverride || this.detectedPasoePath || '';
+    }
+
+    /**
+     * Get the pasoePathOverride option for agentService calls.
+     * Returns the override only when the user explicitly set one.
+     * @returns {string|undefined}
+     */
+    getPasoePathOption() {
+        return this.config.pasoePathOverride || undefined;
     }
 
     /**
@@ -503,6 +568,9 @@ class OeManagerApp {
             this.closeLoginModal();
             this.updateLoginUI(true);
             this.enableControls();
+
+            // Detect PASOE path so auto-load features work without first opening Settings
+            this.detectPasoePath();
             
             if (this.applications.length === 0) {
                 Utils.showToast('No applications found', 'warning');
@@ -558,7 +626,13 @@ class OeManagerApp {
         
         // Destroy existing chart instances to reset them
         this.destroyCharts();
-        
+
+        // Reset auto-load attempt flags so the new app's logs auto-load on view open
+        this._logfilesAutoLoadAttempted = false;
+        this._ablAutoLoadAttempted = false;
+        if (typeof this.stopLogAutoRefresh === 'function') { this.stopLogAutoRefresh(); }
+        this.logAutoLoadConfig = null;
+
         // Reload current view
         this.switchView(this.currentView);
     }
@@ -785,6 +859,7 @@ Object.assign(OeManagerApp.prototype, ChartsViewMixin);
 Object.assign(OeManagerApp.prototype, MetricsViewMixin);
 Object.assign(OeManagerApp.prototype, PasoeStatsViewMixin);
 Object.assign(OeManagerApp.prototype, AblObjectsViewMixin);
+Object.assign(OeManagerApp.prototype, LogfilesViewMixin);
 
 // ==================== INITIALIZE APP ====================
 

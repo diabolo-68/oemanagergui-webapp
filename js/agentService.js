@@ -513,6 +513,104 @@ class AgentService {
         }
         return [];
     }
+
+    // ==================== File Reader API ====================
+
+    /**
+     * Build the base URL for the file reader servlet (same webapp).
+     * Uses the current page origin + webapp path.
+     * @returns {string}
+     */
+    fileApiUrl(endpoint) {
+        const loc = window.location;
+        let path = loc.pathname.replace(/\/index\.html$/i, '').replace(/\/+$/, '');
+        return loc.origin + path + endpoint;
+    }
+
+    /**
+     * Get headers for file reader API.
+     * Includes X-Pasoe-Path header only when a user override is set.
+     * @param {string} [pasoePathOverride] - Optional PASOE path override
+     * @returns {Object}
+     */
+    getFileApiHeaders(pasoePathOverride) {
+        const headers = { 'Accept': '*/*' };
+        if (pasoePathOverride) {
+            headers['X-Pasoe-Path'] = pasoePathOverride;
+        }
+        return headers;
+    }
+
+    /**
+     * Get PASOE instance info (auto-detected catalina.base).
+     * @returns {Promise<{catalinaBase: string}>}
+     */
+    async getPasoeInfo() {
+        const url = this.fileApiUrl('/api/read-file?info=true');
+        this.log('Getting PASOE info:', url);
+        const response = await fetch(url);
+
+        if (!response.ok) {
+            const text = await response.text();
+            throw new Error(`getPasoeInfo failed: ${response.status} ${text}`);
+        }
+
+        return response.json();
+    }
+
+    /**
+     * Read a file from the PASOE server directory.
+     * @param {string} relativePath - Path relative to PASOE base (e.g. 'conf/openedge.properties')
+     * @param {Object} [options]
+     * @param {number} [options.offset=0] - Byte offset to start reading from
+     * @param {string} [options.pasoePathOverride] - Optional PASOE path override
+     * @returns {Promise<{content: string, newOffset: number, totalSize: number}>}
+     */
+    async readServerFile(relativePath, options = {}) {
+        const offset = options.offset || 0;
+        const params = new URLSearchParams({ path: relativePath, offset: String(offset) });
+        const url = this.fileApiUrl('/api/read-file?' + params.toString());
+        this.log('Reading server file:', url);
+
+        const response = await fetch(url, {
+            headers: this.getFileApiHeaders(options.pasoePathOverride)
+        });
+
+        if (!response.ok) {
+            const text = await response.text();
+            throw new Error(`readServerFile failed for "${relativePath}": ${response.status} ${text}`);
+        }
+
+        const content = await response.text();
+        const newOffset = parseInt(response.headers.get('X-New-Offset') || '0', 10);
+        const totalSize = parseInt(response.headers.get('X-Total-Size') || '0', 10);
+
+        return { content, newOffset, totalSize };
+    }
+
+    /**
+     * List files in a directory on the PASOE server.
+     * @param {string} relativeDirPath - Directory path relative to PASOE base
+     * @param {Object} [options]
+     * @param {string} [options.pasoePathOverride] - Optional PASOE path override
+     * @returns {Promise<string[]>} Array of filenames
+     */
+    async listServerDirectory(relativeDirPath, options = {}) {
+        const params = new URLSearchParams({ list: relativeDirPath });
+        const url = this.fileApiUrl('/api/read-file?' + params.toString());
+        this.log('Listing server directory:', url);
+
+        const response = await fetch(url, {
+            headers: this.getFileApiHeaders(options.pasoePathOverride)
+        });
+
+        if (!response.ok) {
+            const text = await response.text();
+            throw new Error(`listServerDirectory failed for "${relativeDirPath}": ${response.status} ${text}`);
+        }
+
+        return response.json();
+    }
 }
 
 // Export as global

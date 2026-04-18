@@ -75,6 +75,10 @@
                         <span class="nav-icon">🔍</span>
                         <span class="nav-label">ABL Objects</span>
                     </li>
+                    <li class="nav-item" data-view="logfiles">
+                        <span class="nav-icon">📋</span>
+                        <span class="nav-label">Logfiles</span>
+                    </li>
                     <li class="nav-item" data-view="settings">
                         <span class="nav-icon">⚙️</span>
                         <span class="nav-label">Settings</span>
@@ -325,9 +329,16 @@
                         <div class="abl-section">
                             <h3>Access Log</h3>
                             <div class="abl-file-row">
-                                <div class="form-group">
+                                <div class="form-group" style="display:none">
                                     <label for="ablAccessLogFile">Tomcat localhost_access_log</label>
                                     <input type="file" id="ablAccessLogFile" accept=".log,.txt">
+                                </div>
+                                <div class="form-group">
+                                    <label for="ablAutoLoadDate">Auto-load date</label>
+                                    <div style="display:flex; gap:8px; align-items:center">
+                                        <input type="date" id="ablAutoLoadDate">
+                                        <button class="btn btn-primary btn-sm" id="ablBtnAutoLoadAccessLog" title="Load access log from PASOE server">Auto-Load</button>
+                                    </div>
                                 </div>
                                 <p id="ablAccessLogStatus" class="abl-sub-status">No file loaded</p>
                             </div>
@@ -381,11 +392,194 @@
                     </div>
                 </div>
 
+                <!-- ==================== LOGFILES ANALYZER VIEW ==================== -->
+                <div id="logfilesView" class="view hidden">
+                    <div class="logfiles-container">
+                        <!-- Toolbar: File inputs -->
+                        <div class="log-toolbar">
+                            <div class="log-toolbar-left">
+                                <div class="log-file-group">
+                                    <label for="logAgentLogFile" class="log-file-label">Agent Log</label>
+                                    <input type="file" id="logAgentLogFile" accept=".log,.txt" class="log-file-input">
+                                    <span id="logAgentLogStatus" class="log-file-status">No file loaded</span>
+                                </div>
+                                <div class="log-file-group">
+                                    <label for="logAccessLogFile" class="log-file-label">Access Log</label>
+                                    <input type="file" id="logAccessLogFile" accept=".log,.txt" class="log-file-input">
+                                    <span id="logAccessLogStatus" class="log-file-status">No file loaded</span>
+                                </div>
+                            </div>
+                            <div class="log-toolbar-right">
+                                <button class="btn btn-secondary" id="logBtnFollowTail" title="Follow Tail">↓ Tail</button>
+                                <span id="logNewEntriesBadge" class="log-badge hidden">0 new</span>
+                                <button class="btn btn-warning" id="logClearBtn" title="Clear all log data">Clear</button>
+                                <span id="logEntryCount" class="log-entry-count"></span>
+                            </div>
+                        </div>
+
+                        <!-- Auto-load toolbar -->
+                        <div class="log-toolbar log-auto-toolbar">
+                            <div class="log-toolbar-left">
+                                <button class="btn btn-primary btn-sm" id="logBtnAutoLoad" title="Load logs from PASOE server">Auto-Load</button>
+                                <div class="log-file-group">
+                                    <label for="logAutoDate" class="log-file-label">Date</label>
+                                    <input type="date" id="logAutoDate" class="log-date-input">
+                                </div>
+                                <span id="logAutoStatus" class="log-file-status"></span>
+                            </div>
+                            <div class="log-toolbar-right">
+                                <label class="log-auto-refresh-label">
+                                    <input type="checkbox" id="logAutoRefreshToggle">
+                                    Auto-refresh
+                                </label>
+                            </div>
+                        </div>
+
+                        <!-- Filter bar -->
+                        <div class="log-filter-bar">
+                            <div class="log-filter-group">
+                                <label>Source</label>
+                                <select id="logFilterSource">
+                                    <option value="all">All</option>
+                                    <option value="agent">Agent</option>
+                                    <option value="access">Access</option>
+                                </select>
+                            </div>
+                            <div class="log-filter-group">
+                                <label>Agent#</label>
+                                <select id="logFilterAgent"><option value="">All</option></select>
+                            </div>
+                            <div class="log-filter-group">
+                                <label>PID</label>
+                                <select id="logFilterPid"><option value="">All</option></select>
+                            </div>
+                            <div class="log-filter-group">
+                                <label>Type</label>
+                                <select id="logFilterLogType"><option value="">All</option></select>
+                            </div>
+                            <div class="log-filter-group log-access-only-filter">
+                                <label>Client IP</label>
+                                <select id="logFilterClientIp"><option value="">All</option></select>
+                            </div>
+                            <div class="log-filter-group log-access-only-filter">
+                                <label>Status</label>
+                                <select id="logFilterStatusCode"><option value="">All</option></select>
+                            </div>
+                            <div class="log-filter-group log-access-only-filter">
+                                <label>Min µs</label>
+                                <input type="number" id="logFilterMinResponseTime" placeholder="0" class="log-filter-input" min="0">
+                            </div>
+                            <div class="log-filter-group">
+                                <label>Request ID</label>
+                                <input type="text" id="logFilterRequestId" placeholder="e.g. 0000e9c2" class="log-filter-input">
+                            </div>
+                            <div class="log-filter-group log-filter-search-group">
+                                <label>Search</label>
+                                <input type="text" id="logFilterSearch" placeholder="Free text..." class="log-filter-input">
+                            </div>
+                            <button class="btn btn-secondary btn-sm" id="logBtnClearFilters" title="Clear all filters">✕</button>
+                        </div>
+
+                        <!-- Log table -->
+                        <div class="log-table-wrapper">
+                            <div class="log-table-header">
+                                <div class="log-col-source"></div>
+                                <div class="log-col-timestamp">Timestamp</div>
+                                <div class="log-col-pid">PID / IP</div>
+                                <div class="log-col-agent">Agt#</div>
+                                <div class="log-col-session">Session</div>
+                                <div class="log-col-request">Request ID</div>
+                                <div class="log-col-type">Type</div>
+                                <div class="log-col-duration" id="logSortDuration">Duration<span id="logSortDurationIndicator"></span></div>
+                                <div class="log-col-message">Message / URL</div>
+                            </div>
+                            <div class="log-scroll-container" id="logScrollContainer">
+                                <div id="logVirtualSpacer" style="position: relative;">
+                                    <div id="logRows"></div>
+                                </div>
+                                <div id="logPlaceholder" class="log-placeholder">
+                                    <p>📋 Upload agent log and/or access log files to begin analysis</p>
+                                </div>
+                            </div>
+                        </div>
+
+                        <!-- Correlation panel -->
+                        <div class="log-correlation-panel" id="logCorrelationPanel">
+                            <div class="log-correlation-header">
+                                <span id="logCorrelationTitle">Correlated Entries</span>
+                                <button class="btn btn-secondary btn-sm" id="logBtnCloseCorrelation">✕</button>
+                            </div>
+                            <div class="log-correlation-entries" id="logCorrelationEntries"></div>
+                        </div>
+
+                        <!-- Resizer -->
+                        <div class="log-resizer" id="logGanttResizer"></div>
+
+                        <!-- Bottom panel: Gantt + Flame Chart -->
+                        <div class="log-bottom-panel" id="logBottomPanel">
+                            <div class="log-bottom-tabs">
+                                <button class="log-bottom-tab active" id="logTabGantt">PID Timeline</button>
+                                <button class="log-bottom-tab" id="logTabWaterfall">Flame Chart</button>
+                            </div>
+
+                            <!-- Gantt section -->
+                            <div class="log-gantt-section" id="logGanttSection">
+                                <div id="logGanttEmpty" class="log-empty-state">No PID timeline data — upload an agent log file</div>
+                                <div id="logGanttChart" class="log-gantt-chart" style="display:none"></div>
+                                <div id="logGanttTooltip" class="log-gantt-tooltip" style="display:none"></div>
+                            </div>
+
+                            <!-- Flame chart section -->
+                            <div class="log-waterfall-section" id="logWaterfallSection" style="display:none">
+                                <div class="log-waterfall-controls">
+                                    <div class="log-waterfall-legend">
+                                        <span class="log-legend-item"><span class="log-legend-swatch" style="background:rgba(137,209,133,0.85)"></span>2xx</span>
+                                        <span class="log-legend-item"><span class="log-legend-swatch" style="background:rgba(55,148,255,0.85)"></span>3xx</span>
+                                        <span class="log-legend-item"><span class="log-legend-swatch" style="background:rgba(204,167,0,0.85)"></span>4xx</span>
+                                        <span class="log-legend-item"><span class="log-legend-swatch" style="background:rgba(241,76,76,0.85)"></span>5xx</span>
+                                    </div>
+                                    <span id="logWaterfallInfo" class="log-waterfall-info"></span>
+                                    <div id="logWaterfallScrollControls" class="log-waterfall-paging" style="display:none">
+                                        <button class="btn btn-secondary btn-sm" id="logBtnWaterfallPrev">◀ Prev</button>
+                                        <span id="logWaterfallPageInfo"></span>
+                                        <button class="btn btn-secondary btn-sm" id="logBtnWaterfallNext">Next ▶</button>
+                                    </div>
+                                    <button class="btn btn-secondary btn-sm" id="logBtnWaterfallResetZoom" style="display:none">Reset Zoom</button>
+                                </div>
+                                <div id="logWaterfallEmpty" class="log-empty-state">No flame chart data — upload an access log file</div>
+                                <div id="logWaterfallContainer" class="log-waterfall-container" style="display:none">
+                                    <canvas id="logWaterfallCanvas"></canvas>
+                                </div>
+                                <div id="logFlameTooltip" class="log-flame-tooltip" style="display:none"></div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
                 <!-- ==================== SETTINGS VIEW ==================== -->
                 <div id="settingsView" class="view hidden">
                     <div class="settings-container">
                         <h2>⚙️ Settings</h2>
                         
+                        <div class="settings-section">
+                            <h3>PASOE Instance</h3>
+                            <div class="settings-grid">
+                                <div class="form-group">
+                                    <label>Detected Path</label>
+                                    <input type="text" id="pasoeDetectedPath" readonly disabled placeholder="Not detected">
+                                    <small class="form-hint">Auto-detected via catalina.base (read-only)</small>
+                                </div>
+                                <div class="form-group">
+                                    <label for="pasoePathOverride">Path Override</label>
+                                    <input type="text" id="pasoePathOverride" placeholder="Leave empty to use detected path">
+                                    <small class="form-hint">Override PASOE path (optional — for non-standard deployments)</small>
+                                </div>
+                            </div>
+                            <div style="margin-top:8px">
+                                <button class="btn btn-secondary btn-sm" id="detectPasoePathBtn">Detect Path</button>
+                            </div>
+                        </div>
+
                         <div class="settings-section">
                             <h3>Trim Agent Settings</h3>
                             <div class="settings-grid">
@@ -424,6 +618,11 @@
                                     <label for="pasoeStatsRefreshSec">PASOE Stats</label>
                                     <input type="number" id="pasoeStatsRefreshSec" value="30" min="5" max="300">
                                     <small class="form-hint">Auto-refresh interval for PASOE stats (seconds)</small>
+                                </div>
+                                <div class="form-group">
+                                    <label for="logRefreshSec">Log Files</label>
+                                    <input type="number" id="logRefreshSec" value="5" min="1" max="60">
+                                    <small class="form-hint">Auto-refresh interval for log file auto-load</small>
                                 </div>
                             </div>
                         </div>
@@ -681,6 +880,8 @@
     <script src="js/metricsView.js"></script>
     <script src="js/pasoeStatsView.js"></script>
     <script src="js/ablObjectsView.js"></script>
+    <script src="js/logFileService.js"></script>
+    <script src="js/logfilesView.js"></script>
     <script src="js/agentService.js"></script>
     <script src="js/app.js"></script>
 </body>

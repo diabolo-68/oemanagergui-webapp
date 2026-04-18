@@ -7,6 +7,16 @@
     <display-name>OE Manager GUI</display-name>
     <description>Web-based management interface for OpenEdge PASOE agents and sessions</description>
     
+    <!-- File Reader Servlet -->
+    <servlet>
+        <servlet-name>FileReaderServlet</servlet-name>
+        <servlet-class>com.oemanager.webapp.FileReaderServlet</servlet-class>
+    </servlet>
+    <servlet-mapping>
+        <servlet-name>FileReaderServlet</servlet-name>
+        <url-pattern>/api/read-file</url-pattern>
+    </servlet-mapping>
+
     <!-- Default welcome file -->
     <welcome-file-list>
         <welcome-file>index.html</welcome-file>
