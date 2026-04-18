@@ -332,6 +332,21 @@ const AblObjectsViewMixin = {
             return;
         }
 
+        // Show spinner while consolidating
+        const resultsContainer = document.getElementById('ablResultsContainer');
+        if (resultsContainer) {
+            resultsContainer.innerHTML = '<span class="abl-spinner"></span> Consolidating\u2026';
+        }
+        this.showAblResultsControls(false);
+
+        // Use setTimeout to allow the spinner to render before heavy processing
+        setTimeout(() => { this._doConsolidate(); }, 50);
+    },
+
+    /**
+     * Internal consolidation logic (called after spinner is shown)
+     */
+    _doConsolidate() {
         try {
             // Phase 1: Extract and flatten ABL objects
             const ablObjects = this.ablObjectsReport?.result?.ABLOutput?.ABLObjects;
@@ -877,16 +892,16 @@ const AblObjectsViewMixin = {
 
         if (mode === 'bySource') {
             const rows = this.applyAblFilters(this.aggregateBySource(this.ablConsolidatedData));
-            lines = ['source;totalObjects;requestCount;avgObjects'];
-            rows.forEach(r => lines.push([r.source, r.totalObjects, r.requestCount, r.avgObjects].join(';')));
+            lines = ['source;totalObjects;distinctRequests;avgPerRequest'];
+            rows.forEach(r => lines.push([r.source, r.totalObjects, r.distinctRequests, r.avgPerRequest].join(';')));
         } else if (mode === 'byRequest') {
             const rows = this.applyAblFilters(this.aggregateByRequest(this.ablConsolidatedData));
-            lines = ['cRqstIdOrig;query;totalObjects;sourceCount'];
-            rows.forEach(r => lines.push([r.cRqstIdOrig, r.query, r.totalObjects, r.sourceCount].join(';')));
+            lines = ['cRqstIdOrig;query;totalObjects;distinctSources'];
+            rows.forEach(r => lines.push([r.cRqstIdOrig, r.query, r.totalObjects, r.distinctSources].join(';')));
         } else if (mode === 'bySession') {
             const rows = this.applyAblFilters(this.aggregateBySession(this.ablConsolidatedData));
-            lines = ['sessionId;totalObjects;requestCount;sourceCount'];
-            rows.forEach(r => lines.push([r.sessionId, r.totalObjects, r.requestCount, r.sourceCount].join(';')));
+            lines = ['sessionId;totalObjects;distinctRequests;distinctSources'];
+            rows.forEach(r => lines.push([r.sessionId, r.totalObjects, r.distinctRequests, r.distinctSources].join(';')));
         } else {
             const rows = this.applyAblFilters(this.ablConsolidatedData);
             lines = ['sessionId;cRqstIdOrig;source;query;objectCount'];
