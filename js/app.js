@@ -55,6 +55,14 @@ class OeManagerApp {
         // Properties modal state
         this.currentProperties = null;
         
+        // ABL Objects view state
+        this.ablAgents = [];
+        this.ablSelectedAgentId = '';
+        this.ablObjectsReport = null;
+        this.ablAccessLogData = null;
+        this.ablConsolidatedData = [];
+        this.ablAccessLogFileName = '';
+        
         // Timers
         this.agentsRefreshTimer = null;
         this.sessionsRefreshTimer = null;
@@ -223,6 +231,30 @@ class OeManagerApp {
             this.loadMetricsData();  // Reload to fetch/hide requests
         });
 
+        // ABL Objects view buttons
+        document.getElementById('ablAgentSelect')?.addEventListener('change', (e) => {
+            this.onAblAgentChange(e.target.value);
+        });
+        document.getElementById('ablEnableBtn')?.addEventListener('click', () => this.ablEnableTracking());
+        document.getElementById('ablDisableBtn')?.addEventListener('click', () => this.ablDisableTracking());
+        document.getElementById('ablGetReportBtn')?.addEventListener('click', () => this.ablGetReport());
+        document.getElementById('ablDownloadReportBtn')?.addEventListener('click', () => this.downloadAblReport());
+        document.getElementById('ablAccessLogFile')?.addEventListener('change', (e) => {
+            if (e.target.files.length > 0) {
+                this.handleAccessLogFile(e.target.files[0]);
+            }
+        });
+        document.getElementById('ablConsolidateBtn')?.addEventListener('click', () => this.consolidateData());
+        document.getElementById('ablExportCsvBtn')?.addEventListener('click', () => this.exportConsolidatedCsv());
+
+        // ABL Objects mode tabs
+        document.querySelectorAll('.abl-mode-tab').forEach(tab => {
+            tab.addEventListener('click', () => this.onAblModeChange(tab.dataset.mode));
+        });
+
+        // ABL Objects filters
+        this.setupAblFilterListeners();
+
         // Context menus - hide on click outside
         document.addEventListener('click', (e) => {
             const agentMenu = document.getElementById('contextMenu');
@@ -380,6 +412,9 @@ class OeManagerApp {
                     this.initPasoeStatsCharts();
                     this.loadPasoeStatsData();
                     this.startPasoeStatsAutoRefresh();
+                    break;
+                case 'ablObjects':
+                    this.loadAblObjectsView();
                     break;
             }
         }
@@ -749,6 +784,7 @@ Object.assign(OeManagerApp.prototype, AgentsViewMixin);
 Object.assign(OeManagerApp.prototype, ChartsViewMixin);
 Object.assign(OeManagerApp.prototype, MetricsViewMixin);
 Object.assign(OeManagerApp.prototype, PasoeStatsViewMixin);
+Object.assign(OeManagerApp.prototype, AblObjectsViewMixin);
 
 // ==================== INITIALIZE APP ====================
 

@@ -71,6 +71,10 @@
                         <span class="nav-icon">📉</span>
                         <span class="nav-label">PASOE Stats</span>
                     </li>
+                    <li class="nav-item" data-view="ablObjects">
+                        <span class="nav-icon">🔍</span>
+                        <span class="nav-label">ABL Objects</span>
+                    </li>
                     <li class="nav-item" data-view="settings">
                         <span class="nav-icon">⚙️</span>
                         <span class="nav-label">Settings</span>
@@ -279,6 +283,99 @@
                                 <div class="chart-wrapper-pasoe">
                                     <canvas id="pasoeSessionsChart"></canvas>
                                 </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- ==================== ABL OBJECTS VIEW ==================== -->
+                <div id="ablObjectsView" class="view hidden">
+                    <div class="abl-objects-container">
+                        <!-- Agent Selection & Actions -->
+                        <div class="abl-section">
+                            <h2>🔍 ABL Objects Tracking</h2>
+                            <p id="ablStatusMessage" class="abl-status-message">Select an agent to manage ABL Objects tracking.</p>
+
+                            <div class="abl-agent-row">
+                                <div class="form-group">
+                                    <label for="ablAgentSelect">Agent</label>
+                                    <select id="ablAgentSelect">
+                                        <option value="">-- Select Agent --</option>
+                                    </select>
+                                </div>
+                                <div class="abl-action-buttons">
+                                    <button class="btn btn-success" id="ablEnableBtn" disabled>Enable Tracking</button>
+                                    <button class="btn btn-warning" id="ablDisableBtn" disabled>Disable Tracking</button>
+                                    <button class="btn btn-primary" id="ablGetReportBtn" disabled>Get Report</button>
+                                    <button class="btn btn-secondary" id="ablDownloadReportBtn" disabled>Download JSON</button>
+                                </div>
+                            </div>
+                        </div>
+
+                        <!-- Report Summary -->
+                        <div class="abl-section">
+                            <h3>Report Summary</h3>
+                            <p id="ablReportStatus" class="abl-sub-status">No report loaded</p>
+                            <div id="ablObjectsSummary">
+                                <p class="empty-state">Get an ABL Objects report to see summary</p>
+                            </div>
+                        </div>
+
+                        <!-- Access Log -->
+                        <div class="abl-section">
+                            <h3>Access Log</h3>
+                            <div class="abl-file-row">
+                                <div class="form-group">
+                                    <label for="ablAccessLogFile">Tomcat localhost_access_log</label>
+                                    <input type="file" id="ablAccessLogFile" accept=".log,.txt">
+                                </div>
+                                <p id="ablAccessLogStatus" class="abl-sub-status">No file loaded</p>
+                            </div>
+                        </div>
+
+                        <!-- Consolidation -->
+                        <div class="abl-section">
+                            <h3>Consolidation</h3>
+                            <div class="abl-action-buttons">
+                                <button class="btn btn-primary" id="ablConsolidateBtn" disabled>Consolidate</button>
+                                <button class="btn btn-secondary" id="ablExportCsvBtn" disabled>Export CSV</button>
+                            </div>
+                        </div>
+
+                        <!-- Results -->
+                        <div class="abl-section">
+                            <h3>Consolidated Results</h3>
+
+                            <!-- Summary Stats Bar -->
+                            <div id="ablSummaryStats" class="abl-summary-stats hidden">
+                                <span class="abl-stat-badge" id="ablStatTotal" title="Total ABL objects across all entries">Objects: 0</span>
+                                <span class="abl-stat-badge" id="ablStatSources" title="Unique source classes">Sources: 0</span>
+                                <span class="abl-stat-badge" id="ablStatRequests" title="Unique request IDs">Requests: 0</span>
+                                <span class="abl-stat-badge" id="ablStatSessions" title="Unique agent sessions">Sessions: 0</span>
+                            </div>
+
+                            <!-- Display Mode Tabs -->
+                            <div id="ablModeTabs" class="abl-mode-tabs hidden">
+                                <button class="abl-mode-tab" data-mode="bySource">By Source</button>
+                                <button class="abl-mode-tab" data-mode="byRequest">By Request</button>
+                                <button class="abl-mode-tab" data-mode="bySession">By Session</button>
+                                <button class="abl-mode-tab" data-mode="detail">Detail</button>
+                            </div>
+
+                            <!-- Filter Controls -->
+                            <div id="ablFilterBar" class="abl-filter-bar hidden">
+                                <div class="abl-filter-group">
+                                    <input type="text" id="ablSearchInput" class="abl-filter-input" placeholder="Search...">
+                                </div>
+                                <div class="abl-filter-group">
+                                    <label for="ablMinObjects">Min objects:</label>
+                                    <input type="number" id="ablMinObjects" class="abl-filter-input abl-filter-num" min="0" value="0">
+                                </div>
+                                <span id="ablFilterCount" class="abl-filter-count"></span>
+                            </div>
+
+                            <div id="ablResultsContainer">
+                                <p class="empty-state">Run consolidation to see results</p>
                             </div>
                         </div>
                     </div>
@@ -583,6 +680,7 @@
     <script src="js/chartsView.js"></script>
     <script src="js/metricsView.js"></script>
     <script src="js/pasoeStatsView.js"></script>
+    <script src="js/ablObjectsView.js"></script>
     <script src="js/agentService.js"></script>
     <script src="js/app.js"></script>
 </body>
