@@ -1564,3 +1564,8 @@ const LogfilesViewMixin = {
         }
     },
 };
+
+// Allow CommonJS require() in test environments without affecting browser usage.
+if (typeof module !== 'undefined' && module.exports) {
+    module.exports = { LogfilesViewMixin };
+}

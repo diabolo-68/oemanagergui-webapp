@@ -517,3 +517,8 @@ const AgentsViewMixin = {
 
 // Apply mixin to OeManagerApp prototype when app.js loads
 // This is done at the end of app.js after class definition
+
+// Allow CommonJS require() in test environments without affecting browser usage.
+if (typeof module !== 'undefined' && module.exports) {
+    module.exports = { AgentsViewMixin };
+}

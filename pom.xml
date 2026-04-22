@@ -68,7 +68,13 @@
                         *.iml,
                         .idea/**,
                         .vscode/**,
-                        dependency-reduced-pom.xml
+                        dependency-reduced-pom.xml,
+                        node_modules/**,
+                        tests/**,
+                        coverage/**,
+                        package.json,
+                        package-lock.json,
+                        vitest.config.js
                     </packagingExcludes>
                     
                     <!-- Include webapp content -->

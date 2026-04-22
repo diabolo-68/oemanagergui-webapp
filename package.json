@@ -1,0 +1,21 @@
+{
+  "name": "oemanagergui-webapp",
+  "version": "1.2.0",
+  "private": true,
+  "description": "Static webapp for managing OpenEdge PASOE agents (test harness)",
+  "scripts": {
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "test:coverage": "vitest run --coverage",
+    "toolkit": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/toolkit.ps1",
+    "compile": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/toolkit.ps1 compile",
+    "ci": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/toolkit.ps1 ci",
+    "clean": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/toolkit.ps1 clean"
+  },
+  "devDependencies": {
+    "@vitest/coverage-istanbul": "^2.1.9",
+    "@vitest/coverage-v8": "^2.1.8",
+    "jsdom": "^25.0.1",
+    "vitest": "^2.1.8"
+  }
+}

@@ -851,16 +851,25 @@ class OeManagerApp {
     }
 }
 
-// ==================== APPLY MIXINS ====================
-// Add view methods to OeManagerApp prototype
+// ==================== APPLY MIXINS & INITIALIZE APP ====================
+// In the browser the mixin scripts are loaded as globals before this file.
+// Under CommonJS (e.g. unit tests) the bare references would throw, so we
+// only wire up mixins / construct the app when those globals exist.
 
-Object.assign(OeManagerApp.prototype, AgentsViewMixin);
-Object.assign(OeManagerApp.prototype, ChartsViewMixin);
-Object.assign(OeManagerApp.prototype, MetricsViewMixin);
-Object.assign(OeManagerApp.prototype, PasoeStatsViewMixin);
-Object.assign(OeManagerApp.prototype, AblObjectsViewMixin);
-Object.assign(OeManagerApp.prototype, LogfilesViewMixin);
+if (typeof AgentsViewMixin !== 'undefined') {
+    Object.assign(OeManagerApp.prototype, AgentsViewMixin);
+    Object.assign(OeManagerApp.prototype, ChartsViewMixin);
+    Object.assign(OeManagerApp.prototype, MetricsViewMixin);
+    Object.assign(OeManagerApp.prototype, PasoeStatsViewMixin);
+    Object.assign(OeManagerApp.prototype, AblObjectsViewMixin);
+    Object.assign(OeManagerApp.prototype, LogfilesViewMixin);
 
-// ==================== INITIALIZE APP ====================
+    // Auto-instantiate when running in the browser.
+    // eslint-disable-next-line no-unused-vars
+    const app = new OeManagerApp();
+}
 
-const app = new OeManagerApp();
+// Allow CommonJS require() in test environments without affecting browser usage.
+if (typeof module !== 'undefined' && module.exports) {
+    module.exports = { OeManagerApp };
+}

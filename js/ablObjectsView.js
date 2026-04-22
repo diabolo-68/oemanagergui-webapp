@@ -1051,3 +1051,8 @@ const AblObjectsViewMixin = {
 };
 
 // Mixin is applied in app.js after class definition
+
+// Allow CommonJS require() in test environments without affecting browser usage.
+if (typeof module !== 'undefined' && module.exports) {
+    module.exports = { AblObjectsViewMixin };
+}

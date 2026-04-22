@@ -172,3 +172,8 @@ class Utils {
         setTimeout(() => toast.remove(), 5000);
     }
 }
+
+// CommonJS export for unit tests (no-op in the browser script-tag context).
+if (typeof module !== 'undefined' && module.exports) {
+    module.exports = { Utils };
+}

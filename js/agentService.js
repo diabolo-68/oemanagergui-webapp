@@ -615,3 +615,8 @@ class AgentService {
 
 // Export as global
 window.AgentService = AgentService;
+
+// CommonJS export for unit tests (no-op in the browser script-tag context).
+if (typeof module !== 'undefined' && module.exports) {
+    module.exports = { AgentService };
+}

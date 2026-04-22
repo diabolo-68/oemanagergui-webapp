@@ -47,6 +47,8 @@ surefire-reports/
 # Node (if used for frontend tooling)
 node_modules/
 npm-debug.log
+coverage/
+.vitest-cache/
 
 # Local configuration
 local.properties
