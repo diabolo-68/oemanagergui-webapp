@@ -19,15 +19,34 @@
         compile     - mvn clean package (skips tests)
         clean       - Remove target/, coverage/, .vitest-cache/
         deploy      - Copy target/oemanagergui.war to $env:CATALINA_HOME/webapps
+        release     - Build WAR and publish a GitHub Release with it
         all         - install + test + coverage + compile
         ci          - Same as all, fails fast on any error
         help        - Show this help
 
 .PARAMETER Force
     For 'install': re-run npm install even if node_modules exists.
+    For 'release': proceed even if the working tree is dirty.
 
 .PARAMETER SkipTests
-    For 'compile' / 'all' / 'ci': skip the unit-test step before packaging.
+    For 'compile' / 'all' / 'ci' / 'release': skip the unit-test step before packaging.
+
+.PARAMETER Tag
+    For 'release': override the git tag (defaults to 'v<pom-version>').
+
+.PARAMETER Draft
+    For 'release': create the GitHub release as a draft.
+
+.PARAMETER Prerelease
+    For 'release': mark the GitHub release as a pre-release.
+
+.PARAMETER NoBuild
+    For 'release': skip the WAR build (requires an existing target/*.war).
+
+.PARAMETER NoPush
+    For 'release': create the local tag but do not push it to origin.
+    Note: 'gh release create' will still try to upload; use -Draft together
+    with -NoPush if you want a fully local dry-run-style execution.
 
 .EXAMPLE
     .\scripts\toolkit.ps1 test
@@ -37,16 +56,27 @@
 
 .EXAMPLE
     .\scripts\toolkit.ps1 compile -SkipTests
+
+.EXAMPLE
+    .\scripts\toolkit.ps1 release
+
+.EXAMPLE
+    .\scripts\toolkit.ps1 release -Tag v1.2.3 -Draft -SkipTests
 #>
 [CmdletBinding()]
 param(
     [Parameter(Position = 0)]
     [ValidateSet('install', 'test', 'watch', 'coverage', 'lint', 'compile',
-                 'clean', 'deploy', 'all', 'ci', 'help', 'menu')]
+                 'clean', 'deploy', 'release', 'all', 'ci', 'help', 'menu')]
     [string] $Task = 'menu',
 
     [switch] $Force,
-    [switch] $SkipTests
+    [switch] $SkipTests,
+    [string] $Tag,
+    [switch] $Draft,
+    [switch] $Prerelease,
+    [switch] $NoBuild,
+    [switch] $NoPush
 )
 
 $ErrorActionPreference = 'Stop'
@@ -185,6 +215,189 @@ function Task-All {
     Task-Compile -SkipTests:$true   # tests already ran above
 }
 
+# ---- release helpers ------------------------------------------------------
+function Get-PomVersion {
+    $pom = Join-Path $ProjectRoot 'pom.xml'
+    if (-not (Test-Path $pom)) { throw "pom.xml not found at $pom" }
+    $content = Get-Content $pom -Raw
+    # Match the first top-level <version> after </artifactId> (the project
+    # version, not a dependency's). Non-greedy match scoped to project header.
+    $match = [regex]::Match(
+        $content,
+        '<artifactId>\s*oemanagergui\s*</artifactId>\s*<version>\s*([^<]+?)\s*</version>'
+    )
+    if (-not $match.Success) {
+        throw "Unable to determine project version from pom.xml."
+    }
+    return $match.Groups[1].Value.Trim()
+}
+
+function Get-ChangelogSection {
+    param([string] $Version)
+    $changelog = Join-Path $ProjectRoot 'CHANGELOG.md'
+    if (-not (Test-Path $changelog)) {
+        return "Release $Version"
+    }
+    $lines = Get-Content $changelog
+    $headerPattern = '^##\s*\[' + [regex]::Escape($Version) + '\]'
+    $startIdx = -1
+    for ($i = 0; $i -lt $lines.Count; $i++) {
+        if ($lines[$i] -match $headerPattern) { $startIdx = $i; break }
+    }
+    if ($startIdx -lt 0) {
+        Write-Warn2 "No CHANGELOG.md section found for [$Version]; using generic notes."
+        return "Release $Version"
+    }
+    $endIdx = $lines.Count
+    for ($i = $startIdx + 1; $i -lt $lines.Count; $i++) {
+        if ($lines[$i] -match '^##\s*\[') { $endIdx = $i; break }
+    }
+    $section = $lines[($startIdx + 1)..($endIdx - 1)] -join "`n"
+    return $section.Trim()
+}
+
+function Test-WorkingTreeClean {
+    $status = git status --porcelain 2>$null
+    if ($LASTEXITCODE -ne 0) {
+        throw "Failed to query git status. Is this a git repository?"
+    }
+    return [string]::IsNullOrWhiteSpace($status)
+}
+
+function Task-Release {
+    Test-Tool 'git' | Out-Null
+    Test-Tool 'gh'  | Out-Null
+
+    Write-Section 'Verify GitHub CLI authentication'
+    gh auth status 1>$null 2>$null
+    if ($LASTEXITCODE -ne 0) {
+        throw "GitHub CLI is not authenticated. Run 'gh auth login' first."
+    }
+    Write-Ok 'gh is authenticated.'
+
+    $version = Get-PomVersion
+    $tagName = if ([string]::IsNullOrWhiteSpace($Tag)) { "v$version" } else { $Tag }
+    Write-Info "Project version : $version"
+    Write-Info "Release tag     : $tagName"
+
+    if (-not (Test-WorkingTreeClean)) {
+        if ($Force) {
+            Write-Warn2 'Working tree is dirty; continuing because -Force was specified.'
+        } else {
+            throw 'Working tree is dirty. Commit or stash changes, or pass -Force.'
+        }
+    }
+
+    # Abort early if the release already exists on GitHub.
+    gh release view $tagName 1>$null 2>$null
+    if ($LASTEXITCODE -eq 0) {
+        throw "GitHub release '$tagName' already exists. Bump the version or delete it first."
+    }
+
+    # Build (or reuse) the WAR.
+    $warPath = $null
+    $existingWar = Get-ChildItem (Join-Path $ProjectRoot 'target') -Filter '*.war' -ErrorAction SilentlyContinue | Select-Object -First 1
+    if ($NoBuild) {
+        if (-not $existingWar) { throw "-NoBuild specified but no WAR found in target/." }
+        $warPath = $existingWar.FullName
+        Write-Info "Reusing existing WAR: $warPath"
+    } else {
+        Task-Compile
+        $warPath = (Get-ChildItem (Join-Path $ProjectRoot 'target') -Filter '*.war' -ErrorAction SilentlyContinue | Select-Object -First 1).FullName
+        if (-not $warPath) { throw 'WAR build did not produce an artifact.' }
+    }
+
+    # Create the local tag if it doesn't already exist.
+    git rev-parse -q --verify ("refs/tags/{0}" -f $tagName) 1>$null 2>$null
+    if ($LASTEXITCODE -eq 0) {
+        Write-Info "Local tag '$tagName' already exists; reusing it."
+    } else {
+        Invoke-Step "Create git tag $tagName" {
+            git tag -a $tagName -m ("Release {0}" -f $version)
+        }
+    }
+
+    # Push the tag unless explicitly opted out.
+    if ($NoPush) {
+        Write-Warn2 "-NoPush specified; not pushing tag '$tagName' to origin."
+    } else {
+        Invoke-Step "Push tag $tagName to origin" {
+            git push origin $tagName
+        }
+    }
+
+    # Write release notes from the matching CHANGELOG.md section.
+    $notes = Get-ChangelogSection -Version $version
+    $notesFile = New-TemporaryFile
+    try {
+        Set-Content -Path $notesFile -Value $notes -Encoding UTF8
+
+        $ghArgs = @(
+            'release', 'create', $tagName, $warPath,
+            '--title', ("OE Manager GUI {0}" -f $version),
+            '--notes-file', $notesFile.FullName
+        )
+        if ($Draft)       { $ghArgs += '--draft' }
+        if ($Prerelease)  { $ghArgs += '--prerelease' }
+
+        Invoke-Step "Publish GitHub release $tagName" {
+            gh @ghArgs
+        }
+    }
+    finally {
+        Remove-Item $notesFile -Force -ErrorAction SilentlyContinue
+    }
+
+    Write-Section 'Release URL'
+    gh release view $tagName --json url --jq .url
+}
+
+function Read-YesNo {
+    param(
+        [string] $Prompt,
+        [bool]   $Default = $false
+    )
+    $hint = if ($Default) { '[Y/n]' } else { '[y/N]' }
+    $answer = Read-Host ("{0} {1}" -f $Prompt, $hint)
+    if ([string]::IsNullOrWhiteSpace($answer)) { return $Default }
+    return ($answer.Trim().ToLower() -in @('y', 'yes'))
+}
+
+function Task-ReleaseInteractive {
+    Write-Section 'Release options'
+    try {
+        $version = Get-PomVersion
+        Write-Info "Detected pom.xml version: $version (default tag: v$version)"
+    } catch {
+        Write-Warn2 $_.Exception.Message
+    }
+
+    $tagInput = Read-Host 'Custom tag (leave empty for default v<pom-version>)'
+    if (-not [string]::IsNullOrWhiteSpace($tagInput)) {
+        $script:Tag = $tagInput.Trim()
+    } else {
+        $script:Tag = ''
+    }
+
+    $script:Draft       = Read-YesNo -Prompt 'Create as DRAFT release?'      -Default $false
+    $script:Prerelease  = Read-YesNo -Prompt 'Mark as PRE-RELEASE?'           -Default $false
+    $script:NoBuild     = Read-YesNo -Prompt 'Skip WAR build (reuse existing target/*.war)?' -Default $false
+    $script:SkipTests   = Read-YesNo -Prompt 'Skip unit tests during build?'  -Default $false
+    $script:NoPush      = Read-YesNo -Prompt 'Skip pushing the git tag to origin?' -Default $false
+    $script:Force       = Read-YesNo -Prompt 'Continue even if working tree is dirty?' -Default $false
+
+    Write-Host ''
+    Write-Info ('Summary => Tag: {0} | Draft: {1} | Prerelease: {2} | NoBuild: {3} | SkipTests: {4} | NoPush: {5} | Force: {6}' -f `
+        ($(if ($script:Tag) { $script:Tag } else { '<auto>' })),
+        $script:Draft, $script:Prerelease, $script:NoBuild, $script:SkipTests, $script:NoPush, $script:Force)
+    if (-not (Read-YesNo -Prompt 'Proceed with release?' -Default $true)) {
+        Write-Warn2 'Release cancelled.'
+        return
+    }
+
+    Task-Release
+}
+
 function Task-Help {
     Get-Help $PSCommandPath -Detailed
 }
@@ -200,6 +413,9 @@ $MenuItems = @(
     @{ Key = '7'; Task = 'deploy';   Label = 'Deploy WAR to $env:CATALINA_HOME/webapps' }
     @{ Key = '8'; Task = 'all';      Label = 'Full pipeline: install + test + coverage + compile' }
     @{ Key = '9'; Task = 'ci';       Label = 'CI pipeline (alias of all)' }
+    @{ Key = 'r'; Task = 'release';  Label = 'Publish GitHub Release (interactive)' }
+    @{ Key = 'R'; Task = 'release-quick'; Label = 'Publish GitHub Release (defaults, no prompts)' }
+    @{ Key = 'd'; Task = 'release-draft'; Label = 'Publish GitHub Release as DRAFT' }
     @{ Key = 'h'; Task = 'help';     Label = 'Show detailed help' }
     @{ Key = 'q'; Task = '__quit';   Label = 'Quit' }
 )
@@ -223,8 +439,12 @@ function Task-Menu {
         Show-Menu
         $choice = Read-Host 'Choose an option'
         if ([string]::IsNullOrWhiteSpace($choice)) { continue }
-        $choice = $choice.Trim().ToLower()
-        $selected = $MenuItems | Where-Object { $_.Key -eq $choice } | Select-Object -First 1
+        $choice = $choice.Trim()
+        # Case-sensitive match first (so 'r' vs 'R' work), then case-insensitive fallback.
+        $selected = $MenuItems | Where-Object { $_.Key -ceq $choice } | Select-Object -First 1
+        if (-not $selected) {
+            $selected = $MenuItems | Where-Object { $_.Key -ieq $choice } | Select-Object -First 1
+        }
         if (-not $selected) {
             Write-Warn2 "Unknown option: '$choice'"
             Start-Sleep -Seconds 1
@@ -236,16 +456,22 @@ function Task-Menu {
         }
         try {
             switch ($selected.Task) {
-                'install'  { Task-Install }
-                'test'     { Task-Test }
-                'watch'    { Task-Watch }
-                'coverage' { Task-Coverage }
-                'compile'  { Task-Compile }
-                'clean'    { Task-Clean }
-                'deploy'   { Task-Deploy }
-                'all'      { Task-All }
-                'ci'       { Task-All }
-                'help'     { Task-Help }
+                'install'        { Task-Install }
+                'test'           { Task-Test }
+                'watch'          { Task-Watch }
+                'coverage'       { Task-Coverage }
+                'compile'        { Task-Compile }
+                'clean'          { Task-Clean }
+                'deploy'         { Task-Deploy }
+                'release'        { Task-ReleaseInteractive }
+                'release-quick'  { Task-Release }
+                'release-draft'  {
+                    $script:Draft = $true
+                    Task-Release
+                }
+                'all'            { Task-All }
+                'ci'             { Task-All }
+                'help'           { Task-Help }
             }
         }
         catch {
@@ -269,6 +495,7 @@ try {
         'compile'  { Task-Compile }
         'clean'    { Task-Clean }
         'deploy'   { Task-Deploy }
+        'release'  { Task-Release }
         'all'      { Task-All }
         'ci'       { Task-All }
         'help'     { Task-Help }

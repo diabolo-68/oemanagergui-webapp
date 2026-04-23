@@ -1338,6 +1338,94 @@ const LogfilesViewMixin = {
         catch { return url; }
     },
 
+    /**
+     * Align an incremental file read to the last complete line.
+     *
+     * The Java FileReaderServlet returns raw bytes (up to 2 MB) without
+     * newline alignment, so reads can split a log entry mid-line. This helper
+     * trims the trailing partial line from the returned content and rewinds
+     * the byte offset by that many UTF-8 bytes so the next refresh re-reads
+     * the incomplete tail.
+     *
+     * @param {string} content - UTF-8 decoded content returned by the servlet
+     * @param {number} newOffset - Byte offset returned in X-New-Offset
+     * @returns {{content: string, newOffset: number}}
+     */
+    trimPartialTrailingLine(content, newOffset) {
+        if (!content) { return { content, newOffset }; }
+        // Already ends on a line boundary — nothing to trim.
+        if (content.endsWith('\n')) { return { content, newOffset }; }
+
+        const lastNl = content.lastIndexOf('\n');
+        if (lastNl < 0) {
+            // Whole chunk is a single incomplete line. Drop it and rewind
+            // fully so we retry on the next tick.
+            const droppedBytes = this._utf8ByteLength(content);
+            return { content: '', newOffset: Math.max(0, newOffset - droppedBytes) };
+        }
+
+        const kept = content.substring(0, lastNl + 1);
+        const dropped = content.substring(lastNl + 1);
+        const droppedBytes = this._utf8ByteLength(dropped);
+        return { content: kept, newOffset: Math.max(0, newOffset - droppedBytes) };
+    },
+
+    /** UTF-8 byte length of a string (used to rewind server byte offsets). */
+    _utf8ByteLength(s) {
+        if (!s) { return 0; }
+        if (typeof TextEncoder !== 'undefined') {
+            return new TextEncoder().encode(s).length;
+        }
+        // Fallback for environments without TextEncoder.
+        let bytes = 0;
+        for (let i = 0; i < s.length; i++) {
+            const code = s.charCodeAt(i);
+            if (code < 0x80) { bytes += 1; }
+            else if (code < 0x800) { bytes += 2; }
+            else if (code >= 0xD800 && code <= 0xDBFF) { bytes += 4; i++; }
+            else { bytes += 3; }
+        }
+        return bytes;
+    },
+
+    /**
+     * Read a server file from `startOffset` to EOF, looping past the servlet's
+     * per-request byte cap (~2 MB). Returns the concatenated content trimmed
+     * to the last complete line and the corresponding byte offset to persist.
+     *
+     * @param {string} relPath
+     * @param {number} startOffset
+     * @param {string|undefined} pasoePathOverride
+     * @returns {Promise<{content: string, newOffset: number}>}
+     */
+    async _drainServerFile(relPath, startOffset, pasoePathOverride) {
+        const MAX_ITERATIONS = 64; // hard safety stop (~128 MB)
+        let offset = startOffset;
+        let combined = '';
+
+        for (let i = 0; i < MAX_ITERATIONS; i++) {
+            const chunk = await this.agentService.readServerFile(relPath, {
+                offset,
+                pasoePathOverride
+            });
+            // Made no progress — bail out (file shrank or empty response).
+            if (!chunk.content || chunk.newOffset <= offset) {
+                offset = chunk.newOffset || offset;
+                break;
+            }
+            combined += chunk.content;
+            offset = chunk.newOffset;
+            // Reached end of file as it stood when the chunk was read.
+            if (chunk.totalSize && offset >= chunk.totalSize) {
+                break;
+            }
+        }
+
+        // Align to the last complete line so a write in progress on the server
+        // doesn't get parsed as a truncated entry.
+        return this.trimPartialTrailingLine(combined, offset);
+    },
+
     // ==================== AUTO-LOAD FROM PASOE SERVER ====================
 
     /**
@@ -1447,19 +1535,21 @@ const LogfilesViewMixin = {
         let accessLoaded = false;
         let accessError = null;
 
-        // Read agent log (incremental from offset)
+        // Read agent log (incremental from offset). The servlet caps each
+        // response at MAX_READ_BYTES (~2 MB), so we loop until we've drained
+        // the file up to the size reported by the first chunk's X-Total-Size.
         try {
-            const agentResult = await this.agentService.readServerFile(cfg.agentLogRelPath, {
-                offset: this.logAgentLogOffset,
-                pasoePathOverride: cfg.pasoePath
-            });
+            const agentLineOffset = this.logAllEntries.filter(e => e.source === 'agent').length;
+            const drained = await this._drainServerFile(
+                cfg.agentLogRelPath,
+                this.logAgentLogOffset,
+                cfg.pasoePath
+            );
             agentLoaded = true;
-            if (agentResult.content) {
-                newAgentEntries = this.logFileService.parseAgentLog(agentResult.content);
-                // Adjust line numbers to account for offset
-                const lineOffset = this.logAllEntries.filter(e => e.source === 'agent').length;
-                newAgentEntries.forEach(e => { e.lineNumber += lineOffset; });
-                this.logAgentLogOffset = agentResult.newOffset;
+            this.logAgentLogOffset = drained.newOffset;
+            if (drained.content) {
+                newAgentEntries = this.logFileService.parseAgentLog(drained.content);
+                newAgentEntries.forEach(e => { e.lineNumber += agentLineOffset; });
             }
         } catch (e) {
             agentError = e.message;
@@ -1471,16 +1561,17 @@ const LogfilesViewMixin = {
 
         // Read access log (incremental from offset)
         try {
-            const accessResult = await this.agentService.readServerFile(cfg.accessLogRelPath, {
-                offset: this.logAccessLogOffset,
-                pasoePathOverride: cfg.pasoePath
-            });
+            const accessLineOffset = this.logAllEntries.filter(e => e.source === 'access').length;
+            const drained = await this._drainServerFile(
+                cfg.accessLogRelPath,
+                this.logAccessLogOffset,
+                cfg.pasoePath
+            );
             accessLoaded = true;
-            if (accessResult.content) {
-                newAccessEntries = this.logFileService.parseAccessLog(accessResult.content);
-                const lineOffset = this.logAllEntries.filter(e => e.source === 'access').length;
-                newAccessEntries.forEach(e => { e.lineNumber += lineOffset; });
-                this.logAccessLogOffset = accessResult.newOffset;
+            this.logAccessLogOffset = drained.newOffset;
+            if (drained.content) {
+                newAccessEntries = this.logFileService.parseAccessLog(drained.content);
+                newAccessEntries.forEach(e => { e.lineNumber += accessLineOffset; });
             }
         } catch (e) {
             accessError = e.message;
@@ -1518,21 +1609,78 @@ const LogfilesViewMixin = {
         const newEntries = [...newAgentEntries, ...newAccessEntries];
         if (newEntries.length === 0) { return; }
 
-        // Add new entries and re-sort
-        this.logAllEntries.push(...newEntries);
-        this.logAllEntries.sort((a, b) => a.timestamp.localeCompare(b.timestamp));
-
-        // Rebuild indexes
-        this.logCorrelationIndex = this.logFileService.buildShortIdCorrelationIndex(this.logAllEntries);
-        this.updateLogFilterMetadata();
-        this.applyLogFiltersAndRender();
-        this.computeLogGanttData();
+        // Append-only: avoid re-sorting existing rows so the visible scroll position
+        // and rendered page stay stable. Streams are chronological per source; minor
+        // cross-source interleaving is tolerated (matches VS Code extension behavior).
+        this.appendLogEntries(newEntries);
 
         if (this.logActiveBottomTab === 'waterfall') {
             this.computeLogWaterfallData();
         }
 
         this.hideLogPlaceholder();
+    },
+
+    /**
+     * Append newly fetched log entries without resetting the current virtual page.
+     * Preserves scroll position; either auto-scrolls (Follow Tail) or shows the
+     * "+N new" badge so the user can opt in.
+     * @param {Array<Object>} newEntries - Entries to append (any source)
+     */
+    appendLogEntries(newEntries) {
+        if (!Array.isArray(newEntries) || newEntries.length === 0) { return; }
+
+        const wasEmpty = this.logFilteredEntries.length === 0;
+        // Capture scroll state BEFORE we mutate the spacer so we can decide
+        // whether the user was already pinned at the bottom of the log.
+        const wasNearBottom = !wasEmpty && this.isLogScrolledNearBottom();
+
+        // Append to master list (no re-sort).
+        this.logAllEntries.push(...newEntries);
+
+        // Rebuild correlation index and filter metadata so dropdowns and the
+        // correlation panel pick up new request IDs / agents / PIDs.
+        this.logCorrelationIndex = this.logFileService.buildShortIdCorrelationIndex(this.logAllEntries);
+        this.updateLogFilterMetadata();
+
+        // Filter only the new entries and append matches to the filtered list.
+        const newFiltered = this.logFileService.filterEntries(newEntries, this.logCurrentFilters);
+        if (newFiltered.length > 0) {
+            this.logFilteredEntries.push(...newFiltered);
+        }
+
+        // Recompute Gantt data (cheap; needed for new PIDs/time ranges).
+        this.computeLogGanttData();
+
+        this.logTotalFilteredCount = this.logFilteredEntries.length;
+        this.updateLogEntryCount();
+        this.updateLogVirtualSpacer();
+
+        if (newFiltered.length === 0) {
+            // Total grew but nothing matches the active filter — nothing to render.
+            return;
+        }
+
+        // Decide whether to auto-scroll to the bottom: explicit Follow Tail mode,
+        // a fresh load with no prior content, or the user was already pinned at
+        // the bottom of the previous render (typical "tail -f" behavior).
+        const shouldFollow = this.logFollowTail || wasEmpty || wasNearBottom;
+
+        if (shouldFollow) {
+            this.scrollLogToBottom();
+        } else {
+            // Re-render the current page so any new rows that fall inside the
+            // rendered window become visible. Keep logCurrentStartIndex unchanged
+            // so the user's scroll position is preserved.
+            this.sendLogPage(this.logCurrentStartIndex);
+
+            this.logPendingNewEntries += newFiltered.length;
+            const badge = document.getElementById('logNewEntriesBadge');
+            if (badge) {
+                badge.textContent = `+${this.logPendingNewEntries} new`;
+                badge.classList.remove('hidden');
+            }
+        }
     },
 
     /**
