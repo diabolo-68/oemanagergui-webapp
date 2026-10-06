@@ -1678,6 +1678,12 @@ tr.abl-unmatched td {
     margin-left: 4px;
 }
 
+.log-window-status {
+    font-size: 11px;
+    color: var(--text-secondary);
+    white-space: nowrap;
+}
+
 .log-auto-refresh-label {
     display: flex;
     align-items: center;

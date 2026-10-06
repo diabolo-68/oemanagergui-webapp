@@ -18,6 +18,8 @@ import java.nio.charset.StandardCharsets;
  *   <li>{@code GET /api/read-file?info=true} — returns JSON with auto-detected catalinaBase</li>
  *   <li>{@code GET /api/read-file?path=<relative>&offset=<bytes>} — returns file content as text/plain
  *       with headers {@code X-New-Offset} and {@code X-Total-Size}</li>
+ *   <li>{@code GET /api/read-file?path=<relative>&direction=backward|forward&offset=<bytes>&maxBytes=<bytes>}
+ *       — returns a bounded complete-line range with start/end and availability headers</li>
  *   <li>{@code GET /api/read-file?list=<relative>} — returns directory listing as JSON array of filenames</li>
  * </ul>
  *
@@ -29,6 +31,7 @@ import java.nio.charset.StandardCharsets;
 public class FileReaderServlet extends HttpServlet {
 
     private static final long MAX_READ_BYTES = 2 * 1024 * 1024; // 2 MB
+    private static final int NEWLINE_BYTE = '\n';
 
     @Override
     protected void doGet(HttpServletRequest req, HttpServletResponse resp) throws IOException {
@@ -92,52 +95,181 @@ public class FileReaderServlet extends HttpServlet {
             return;
         }
 
-        // Parse offset parameter
-        long offset = 0;
-        String offsetParam = req.getParameter("offset");
-        if (offsetParam != null) {
-            try {
-                offset = Long.parseLong(offsetParam);
-            } catch (NumberFormatException e) {
-                resp.sendError(HttpServletResponse.SC_BAD_REQUEST, "Invalid 'offset' parameter.");
-                return;
-            }
-            if (offset < 0) {
-                offset = 0;
-            }
-        }
-
-        long fileSize = targetFile.length();
-
-        // If offset is beyond file size, return empty with current offset
-        if (offset >= fileSize) {
-            resp.setContentType("text/plain");
-            resp.setCharacterEncoding("UTF-8");
-            resp.setHeader("X-New-Offset", String.valueOf(fileSize));
-            resp.setHeader("X-Total-Size", String.valueOf(fileSize));
-            resp.getWriter().write("");
+        String direction = req.getParameter("direction");
+        if (direction == null || direction.isEmpty()) {
+            handleLegacyFileRead(targetFile, req, resp);
             return;
         }
 
-        // Read up to MAX_READ_BYTES from offset
-        long bytesToRead = Math.min(fileSize - offset, MAX_READ_BYTES);
+        if (!"forward".equals(direction) && !"backward".equals(direction)) {
+            resp.sendError(HttpServletResponse.SC_BAD_REQUEST,
+                    "Invalid 'direction' parameter. Expected 'forward' or 'backward'.");
+            return;
+        }
 
-        byte[] buffer = new byte[(int) bytesToRead];
+        Long offset = parseOptionalLong(req, resp, "offset");
+        if (resp.isCommitted()) {
+            return;
+        }
+        Long requestedBytes = parseOptionalLong(req, resp, "maxBytes");
+        if (resp.isCommitted()) {
+            return;
+        }
+
+        long maxBytes = requestedBytes == null ? MAX_READ_BYTES : requestedBytes;
+        if (maxBytes <= 0) {
+            resp.sendError(HttpServletResponse.SC_BAD_REQUEST, "'maxBytes' must be greater than zero.");
+            return;
+        }
+        maxBytes = Math.min(maxBytes, MAX_READ_BYTES);
+
+        handleRangeRead(targetFile, direction, offset, maxBytes, resp);
+    }
+
+    private void handleLegacyFileRead(File targetFile, HttpServletRequest req, HttpServletResponse resp)
+            throws IOException {
+        Long parsedOffset = parseOptionalLong(req, resp, "offset");
+        if (resp.isCommitted()) {
+            return;
+        }
+        long offset = parsedOffset == null ? 0 : Math.max(0, parsedOffset);
+        long fileSize = targetFile.length();
+
+        if (offset >= fileSize) {
+            writeFileResponse(resp, new byte[0], 0, fileSize, fileSize, fileSize, false);
+            return;
+        }
+
+        int bytesToRead = (int) Math.min(fileSize - offset, MAX_READ_BYTES);
+        byte[] buffer = new byte[bytesToRead];
+        int bytesRead;
         try (RandomAccessFile raf = new RandomAccessFile(targetFile, "r")) {
             raf.seek(offset);
-            int bytesRead = raf.read(buffer);
-            if (bytesRead < 0) {
-                bytesRead = 0;
-            }
-
-            long newOffset = offset + bytesRead;
-
-            resp.setContentType("text/plain");
-            resp.setCharacterEncoding("UTF-8");
-            resp.setHeader("X-New-Offset", String.valueOf(newOffset));
-            resp.setHeader("X-Total-Size", String.valueOf(fileSize));
-            resp.getWriter().write(new String(buffer, 0, bytesRead, StandardCharsets.UTF_8));
+            bytesRead = raf.read(buffer);
         }
+        if (bytesRead < 0) {
+            bytesRead = 0;
+        }
+        writeFileResponse(resp, buffer, bytesRead, offset, offset + bytesRead, fileSize, false);
+    }
+
+    private void handleRangeRead(File targetFile, String direction, Long requestedOffset, long maxBytes,
+            HttpServletResponse resp) throws IOException {
+        long fileSize = targetFile.length();
+        boolean truncated = requestedOffset != null && requestedOffset > fileSize;
+        long anchor = requestedOffset == null
+                ? ("backward".equals(direction) ? fileSize : 0)
+                : Math.max(0, Math.min(requestedOffset, fileSize));
+
+        if (fileSize == 0 || truncated) {
+            writeFileResponse(resp, new byte[0], 0, fileSize, fileSize, fileSize, truncated);
+            return;
+        }
+
+        try (RandomAccessFile raf = new RandomAccessFile(targetFile, "r")) {
+            if ("backward".equals(direction)) {
+                readBackwardRange(raf, anchor, fileSize, maxBytes, resp);
+            } else {
+                readForwardRange(raf, anchor, fileSize, maxBytes, resp);
+            }
+        }
+    }
+
+    private void readBackwardRange(RandomAccessFile raf, long anchor, long fileSize, long maxBytes,
+            HttpServletResponse resp) throws IOException {
+        long requestedStart = Math.max(0, anchor - maxBytes);
+        int length = (int) (anchor - requestedStart);
+        byte[] buffer = new byte[length];
+        raf.seek(requestedStart);
+        int bytesRead = raf.read(buffer);
+        if (bytesRead < 0) {
+            bytesRead = 0;
+        }
+
+        int contentStart = 0;
+        if (requestedStart > 0) {
+            contentStart = indexAfterFirstNewline(buffer, bytesRead);
+        }
+        int contentEnd = lastCompleteLineEnd(buffer, contentStart, bytesRead);
+        long startOffset = requestedStart + contentStart;
+        long endOffset = requestedStart + contentEnd;
+        int contentLength = Math.max(0, contentEnd - contentStart);
+        byte[] content = copyRange(buffer, contentStart, contentLength);
+        writeFileResponse(resp, content, contentLength, startOffset, endOffset, fileSize, false);
+    }
+
+    private void readForwardRange(RandomAccessFile raf, long anchor, long fileSize, long maxBytes,
+            HttpServletResponse resp) throws IOException {
+        if (anchor >= fileSize) {
+            writeFileResponse(resp, new byte[0], 0, anchor, anchor, fileSize, false);
+            return;
+        }
+
+        int length = (int) Math.min(fileSize - anchor, maxBytes);
+        byte[] buffer = new byte[length];
+        raf.seek(anchor);
+        int bytesRead = raf.read(buffer);
+        if (bytesRead < 0) {
+            bytesRead = 0;
+        }
+
+        int contentEnd = lastCompleteLineEnd(buffer, 0, bytesRead);
+        long endOffset = anchor + contentEnd;
+        byte[] content = copyRange(buffer, 0, contentEnd);
+        writeFileResponse(resp, content, contentEnd, anchor, endOffset, fileSize, false);
+    }
+
+    private int indexAfterFirstNewline(byte[] buffer, int length) {
+        for (int i = 0; i < length; i++) {
+            if (buffer[i] == NEWLINE_BYTE) {
+                return i + 1;
+            }
+        }
+        return length;
+    }
+
+    private int lastCompleteLineEnd(byte[] buffer, int start, int length) {
+        for (int i = length - 1; i >= start; i--) {
+            if (buffer[i] == NEWLINE_BYTE) {
+                return i + 1;
+            }
+        }
+        return start;
+    }
+
+    private byte[] copyRange(byte[] buffer, int start, int length) {
+        byte[] content = new byte[length];
+        if (length > 0) {
+            System.arraycopy(buffer, start, content, 0, length);
+        }
+        return content;
+    }
+
+    private Long parseOptionalLong(HttpServletRequest req, HttpServletResponse resp, String parameter)
+            throws IOException {
+        String value = req.getParameter(parameter);
+        if (value == null || value.isEmpty()) {
+            return null;
+        }
+        try {
+            return Long.parseLong(value);
+        } catch (NumberFormatException e) {
+            resp.sendError(HttpServletResponse.SC_BAD_REQUEST, "Invalid '" + parameter + "' parameter.");
+            return null;
+        }
+    }
+
+    private void writeFileResponse(HttpServletResponse resp, byte[] buffer, int length, long startOffset,
+            long endOffset, long fileSize, boolean truncated) throws IOException {
+        resp.setContentType("text/plain");
+        resp.setCharacterEncoding("UTF-8");
+        resp.setHeader("X-Start-Offset", String.valueOf(startOffset));
+        resp.setHeader("X-New-Offset", String.valueOf(endOffset));
+        resp.setHeader("X-Total-Size", String.valueOf(fileSize));
+        resp.setHeader("X-Has-Older", String.valueOf(startOffset > 0));
+        resp.setHeader("X-Has-Newer", String.valueOf(endOffset < fileSize));
+        resp.setHeader("X-File-Truncated", String.valueOf(truncated));
+        resp.getWriter().write(new String(buffer, 0, length, StandardCharsets.UTF_8));
     }
 
     /**

@@ -563,12 +563,24 @@ class AgentService {
      * @param {string} relativePath - Path relative to PASOE base (e.g. 'conf/openedge.properties')
      * @param {Object} [options]
      * @param {number} [options.offset=0] - Byte offset to start reading from
+     * @param {'forward'|'backward'} [options.direction] - Bounded read direction
+     * @param {number} [options.maxBytes] - Maximum bytes to return for a bounded read
      * @param {string} [options.pasoePathOverride] - Optional PASOE path override
-     * @returns {Promise<{content: string, newOffset: number, totalSize: number}>}
+     * @returns {Promise<Object>} File content and authoritative byte-range metadata
      */
     async readServerFile(relativePath, options = {}) {
-        const offset = options.offset || 0;
-        const params = new URLSearchParams({ path: relativePath, offset: String(offset) });
+        const params = new URLSearchParams({ path: relativePath });
+        if (options.offset !== undefined && options.offset !== null) {
+            params.set('offset', String(options.offset));
+        } else if (!options.direction) {
+            params.set('offset', '0');
+        }
+        if (options.direction) {
+            params.set('direction', options.direction);
+        }
+        if (options.maxBytes !== undefined) {
+            params.set('maxBytes', String(options.maxBytes));
+        }
         const url = this.fileApiUrl('/api/read-file?' + params.toString());
         this.log('Reading server file:', url);
 
@@ -582,10 +594,22 @@ class AgentService {
         }
 
         const content = await response.text();
+        const startOffset = parseInt(response.headers.get('X-Start-Offset') || '0', 10);
         const newOffset = parseInt(response.headers.get('X-New-Offset') || '0', 10);
         const totalSize = parseInt(response.headers.get('X-Total-Size') || '0', 10);
+        const hasOlder = response.headers.get('X-Has-Older') === 'true';
+        const hasNewer = response.headers.get('X-Has-Newer') === 'true';
+        const fileTruncated = response.headers.get('X-File-Truncated') === 'true';
 
-        return { content, newOffset, totalSize };
+        return {
+            content,
+            startOffset,
+            newOffset,
+            totalSize,
+            hasOlder,
+            hasNewer,
+            fileTruncated
+        };
     }
 
     /**

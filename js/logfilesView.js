@@ -13,6 +13,9 @@
  * - Flame chart (Canvas 2D with lane assignment, zoom, drag-to-zoom, click-to-correlate)
  * - Resizable bottom panel
  */
+const LOG_CHUNK_BYTES = 256 * 1024;
+const LOG_MAX_CHUNKS_PER_SOURCE = 3;
+
 const LogfilesViewMixin = {
 
     // ==================== INITIALIZATION ====================
@@ -49,6 +52,11 @@ const LogfilesViewMixin = {
         this.logHighlightedRequestId = null;
         this.logFollowTail = false;
         this.logPendingNewEntries = 0;
+        this.logWindowLoading = false;
+        this.logSourceWindows = {
+            agent: this.createLogSourceWindow('agent'),
+            access: this.createLogSourceWindow('access')
+        };
 
         // Gantt data
         this.logGanttData = [];
@@ -173,6 +181,8 @@ const LogfilesViewMixin = {
             self.updateLogFollowTailButton();
             self.scrollLogToBottom();
         });
+        document.getElementById('logBtnOlder')?.addEventListener('click', () => self.loadAdjacentLogWindow('older'));
+        document.getElementById('logBtnNewer')?.addEventListener('click', () => self.loadAdjacentLogWindow('newer'));
 
         // Virtual scroll
         const scrollContainer = document.getElementById('logScrollContainer');
@@ -399,68 +409,304 @@ const LogfilesViewMixin = {
 
     // ==================== FILE HANDLING ====================
 
-    handleAgentLogFile(file) {
-        const statusEl = document.getElementById('logAgentLogStatus');
-        statusEl.textContent = `Loading ${file.name}...`;
-
-        const reader = new FileReader();
-        reader.onload = (e) => {
-            const content = e.target.result;
-            const agentEntries = this.logFileService.parseAgentLog(content);
-            statusEl.textContent = `${file.name} — ${agentEntries.length.toLocaleString()} entries`;
-
-            // Merge with existing access entries
-            const existingAccess = this.logAllEntries.filter(e => e.source === 'access');
-            this.logAllEntries = this.logFileService.mergeEntries(agentEntries, existingAccess);
-            this.logCorrelationIndex = this.logFileService.buildShortIdCorrelationIndex(this.logAllEntries);
-
-            this.updateLogFilterMetadata();
-            this.applyLogFiltersAndRender();
-            this.computeLogGanttData();
-
-            if (this.logActiveBottomTab === 'waterfall') {
-                this.computeLogWaterfallData();
-            }
-
-            this.hideLogPlaceholder();
-        };
-        reader.onerror = () => {
-            statusEl.textContent = `Error reading ${file.name}`;
-            Utils.showToast(`Error reading file: ${file.name}`, 'error');
-        };
-        reader.readAsText(file);
+    async handleAgentLogFile(file) {
+        await this.loadLocalLogFile('agent', file);
     },
 
-    handleAccessLogFile(file) {
-        const statusEl = document.getElementById('logAccessLogStatus');
-        statusEl.textContent = `Loading ${file.name}...`;
+    async handleAccessLogFile(file) {
+        await this.loadLocalLogFile('access', file);
+    },
 
-        const reader = new FileReader();
-        reader.onload = (e) => {
-            const content = e.target.result;
-            const accessEntries = this.logFileService.parseAccessLog(content);
-            statusEl.textContent = `${file.name} — ${accessEntries.length.toLocaleString()} entries`;
-
-            // Merge with existing agent entries
-            const existingAgent = this.logAllEntries.filter(e => e.source === 'agent');
-            this.logAllEntries = this.logFileService.mergeEntries(existingAgent, accessEntries);
-            this.logCorrelationIndex = this.logFileService.buildShortIdCorrelationIndex(this.logAllEntries);
-
-            this.updateLogFilterMetadata();
-            this.applyLogFiltersAndRender();
-            this.computeLogGanttData();
-
-            if (this.logActiveBottomTab === 'waterfall') {
-                this.computeLogWaterfallData();
-            }
-
-            this.hideLogPlaceholder();
+    createLogSourceWindow(source) {
+        return {
+            source,
+            chunks: [],
+            relativePath: '',
+            fileName: '',
+            pasoePath: undefined,
+            localFile: null,
+            totalSize: 0,
+            hasOlder: false,
+            hasNewer: false,
+            atTail: true
         };
-        reader.onerror = () => {
-            statusEl.textContent = `Error reading ${file.name}`;
+    },
+
+    async loadLocalLogFile(sourceName, file) {
+        const statusEl = document.getElementById(
+            sourceName === 'agent' ? 'logAgentLogStatus' : 'logAccessLogStatus'
+        );
+        if (statusEl) { statusEl.textContent = `Loading ${file.name}...`; }
+
+        const source = this.createLogSourceWindow(sourceName);
+        source.fileName = file.name;
+        source.localFile = file;
+        source.totalSize = file.size;
+        this.logSourceWindows[sourceName] = source;
+
+        try {
+            await this.loadLogSourceChunk(source, 'initial');
+            this.logFollowTail = true;
+            this.updateLogFollowTailButton();
+            this.rebuildLogWindow(null, true);
+        } catch (error) {
+            console.error(`[Logfiles] Failed to read ${file.name}:`, error);
+            if (statusEl) { statusEl.textContent = `Error reading ${file.name}`; }
             Utils.showToast(`Error reading file: ${file.name}`, 'error');
+        }
+    },
+
+    async readLocalLogChunk(source, direction, anchorOffset) {
+        const file = source.localFile;
+        const anchor = anchorOffset ?? (direction === 'backward' ? file.size : 0);
+        const rawStart = direction === 'backward'
+            ? Math.max(0, anchor - LOG_CHUNK_BYTES)
+            : Math.min(anchor, file.size);
+        const rawEnd = direction === 'backward'
+            ? Math.min(anchor, file.size)
+            : Math.min(file.size, rawStart + LOG_CHUNK_BYTES);
+        let content = await file.slice(rawStart, rawEnd).text();
+        let startOffset = rawStart;
+
+        if (direction === 'backward' && rawStart > 0) {
+            const firstNewline = content.indexOf('\n');
+            if (firstNewline < 0) {
+                content = '';
+                startOffset = rawEnd;
+            } else {
+                const dropped = content.substring(0, firstNewline + 1);
+                startOffset += this._utf8ByteLength(dropped);
+                content = content.substring(firstNewline + 1);
+            }
+        }
+
+        if (rawEnd < file.size) {
+            const lastNewline = content.lastIndexOf('\n');
+            content = lastNewline >= 0 ? content.substring(0, lastNewline + 1) : '';
+        }
+
+        const newOffset = startOffset + this._utf8ByteLength(content);
+        return {
+            content,
+            startOffset,
+            newOffset,
+            totalSize: file.size,
+            hasOlder: startOffset > 0,
+            hasNewer: newOffset < file.size,
+            fileTruncated: false
         };
-        reader.readAsText(file);
+    },
+
+    async loadLogSourceChunk(source, direction) {
+        if (!source.localFile && !source.relativePath) { return false; }
+
+        const firstChunk = source.chunks[0];
+        const lastChunk = source.chunks[source.chunks.length - 1];
+        const readDirection = direction === 'older' || direction === 'initial' ? 'backward' : 'forward';
+        let offset;
+        if (direction === 'older') {
+            offset = firstChunk?.startOffset;
+        } else if (direction === 'newer') {
+            offset = lastChunk?.endOffset ?? 0;
+        }
+
+        const result = source.localFile
+            ? await this.readLocalLogChunk(source, readDirection, offset)
+            : await this.agentService.readServerFile(source.relativePath, {
+                direction: readDirection,
+                offset,
+                maxBytes: LOG_CHUNK_BYTES,
+                pasoePathOverride: source.pasoePath
+            });
+
+        if (result.fileTruncated) {
+            source.chunks = [];
+            source.totalSize = result.totalSize;
+            source.hasOlder = false;
+            source.hasNewer = false;
+            source.atTail = true;
+            if (direction !== 'initial') {
+                return this.loadLogSourceChunk(source, 'initial');
+            }
+        }
+
+        source.totalSize = result.totalSize;
+        if (!result.content || result.newOffset <= result.startOffset) {
+            source.hasOlder = source.chunks[0]?.startOffset > 0;
+            source.hasNewer = false;
+            source.atTail = direction !== 'older';
+            return false;
+        }
+
+        source.chunks = this.logFileService.mergeLogChunk(source.chunks, {
+            startOffset: result.startOffset,
+            endOffset: result.newOffset,
+            content: result.content
+        });
+        source.chunks = this.logFileService.retainLogChunks(
+            source.chunks,
+            LOG_MAX_CHUNKS_PER_SOURCE,
+            direction === 'older' ? 'older' : 'newer'
+        );
+
+        source.hasOlder = source.chunks[0]?.startOffset > 0;
+        const windowEnd = source.chunks[source.chunks.length - 1]?.endOffset ?? 0;
+        const remainingBytes = Math.max(0, source.totalSize - windowEnd);
+        if (direction === 'initial') {
+            source.hasNewer = false;
+            source.atTail = true;
+        } else if (direction === 'newer') {
+            source.hasNewer = remainingBytes > 0;
+            source.atTail = !source.hasNewer;
+        } else {
+            source.hasNewer = remainingBytes > 0;
+            source.atTail = false;
+        }
+        return true;
+    },
+
+    captureLogViewportAnchor() {
+        const scrollContainer = document.getElementById('logScrollContainer');
+        if (!scrollContainer || this.logFilteredEntries.length === 0) { return null; }
+        const rowIndex = Math.min(
+            this.logFilteredEntries.length - 1,
+            Math.floor(scrollContainer.scrollTop / 24)
+        );
+        return {
+            key: this.getLogEntryKey(this.logFilteredEntries[rowIndex]),
+            remainder: scrollContainer.scrollTop % 24
+        };
+    },
+
+    getLogEntryKey(entry) {
+        if (!entry) { return ''; }
+        return [
+            entry.source,
+            entry.timestamp,
+            entry.appRequestId,
+            entry.processId ?? entry.clientIp,
+            entry.message ?? entry.url
+        ].join('|');
+    },
+
+    rebuildLogWindow(anchor = null, scrollToTail = false, fallbackDirection = 'older') {
+        const agentContent = this.logFileService.joinLogChunks(this.logSourceWindows.agent.chunks);
+        const accessContent = this.logFileService.joinLogChunks(this.logSourceWindows.access.chunks);
+        const agentEntries = this.logFileService.parseAgentLog(agentContent);
+        const accessEntries = this.logFileService.parseAccessLog(accessContent);
+
+        this.logAllEntries = this.logFileService.mergeEntries(agentEntries, accessEntries);
+        this.logCorrelationIndex = this.logFileService.buildShortIdCorrelationIndex(this.logAllEntries);
+        this.updateLogFilterMetadata();
+        this.logFilteredEntries = this.logFileService.filterEntries(this.logAllEntries, this.logCurrentFilters);
+        this.sortLogFilteredEntries();
+        this.logTotalFilteredCount = this.logFilteredEntries.length;
+        this.updateLogEntryCount();
+        this.updateLogVirtualSpacer();
+        this.hideLogPlaceholder();
+        this.updateLogWindowStatus();
+        this.updateLogSourceStatuses();
+
+        if (scrollToTail) {
+            this.scrollLogToBottom();
+            return;
+        }
+
+        let anchorIndex = -1;
+        if (anchor?.key) {
+            anchorIndex = this.logFilteredEntries.findIndex(entry =>
+                this.getLogEntryKey(entry) === anchor.key
+            );
+        }
+        const visibleIndex = anchorIndex >= 0
+            ? anchorIndex
+            : (fallbackDirection === 'newer'
+                ? Math.min(100, Math.max(0, this.logFilteredEntries.length - 1))
+                : 0);
+        this.sendLogPage(Math.max(0, visibleIndex - 50));
+        requestAnimationFrame(() => {
+            const scrollContainer = document.getElementById('logScrollContainer');
+            if (scrollContainer) {
+                scrollContainer.scrollTop = visibleIndex * 24 + (anchor?.remainder ?? 0);
+            }
+        });
+    },
+
+    async loadAdjacentLogWindow(direction) {
+        if (this.logWindowLoading) { return; }
+        const sources = Object.values(this.logSourceWindows).filter(source =>
+            direction === 'older' ? source.hasOlder : source.hasNewer
+        );
+        if (sources.length === 0) {
+            this.updateLogWindowStatus();
+            return;
+        }
+
+        this.logWindowLoading = true;
+        this.updateLogWindowStatus(`Loading ${direction} entries...`);
+        const anchor = this.captureLogViewportAnchor();
+
+        try {
+            const results = await Promise.all(sources.map(source =>
+                this.loadLogSourceChunk(source, direction)
+            ));
+            if (results.some(Boolean)) {
+                this.logFollowTail = direction === 'newer' &&
+                    Object.values(this.logSourceWindows).every(source => !source.hasNewer);
+                this.updateLogFollowTailButton();
+                this.rebuildLogWindow(anchor, false, direction);
+            }
+        } catch (error) {
+            console.error(`[Logfiles] Failed to load ${direction} entries:`, error);
+            Utils.showToast(`Failed to load ${direction} log entries: ${error.message}`, 'error');
+        } finally {
+            this.logWindowLoading = false;
+            this.updateLogWindowStatus();
+        }
+    },
+
+    updateLogWindowStatus(message = '') {
+        const status = document.getElementById('logWindowStatus');
+        const olderButton = document.getElementById('logBtnOlder');
+        const newerButton = document.getElementById('logBtnNewer');
+        const sources = Object.values(this.logSourceWindows ?? {});
+        const hasOlder = sources.some(source => source.hasOlder);
+        const hasNewer = sources.some(source => source.hasNewer);
+        const loadedBytes = sources.reduce((total, source) =>
+            total + source.chunks.reduce((sum, chunk) => sum + (chunk.endOffset - chunk.startOffset), 0), 0
+        );
+
+        if (status) {
+            status.textContent = message ||
+                `${this.logAllEntries.length.toLocaleString()} loaded-window entries ` +
+                `(${(loadedBytes / 1024).toFixed(0)} KiB)`;
+        }
+        if (olderButton) {
+            olderButton.disabled = this.logWindowLoading || !hasOlder;
+        }
+        if (newerButton) {
+            newerButton.disabled = this.logWindowLoading || !hasNewer;
+        }
+    },
+
+    updateLogSourceStatuses() {
+        for (const source of Object.values(this.logSourceWindows)) {
+            if (!source.fileName || source.chunks.length === 0) { continue; }
+            const status = document.getElementById(
+                source.source === 'agent' ? 'logAgentLogStatus' : 'logAccessLogStatus'
+            );
+            if (!status) { continue; }
+
+            const entryCount = this.logAllEntries.filter(entry => entry.source === source.source).length;
+            const loadedBytes = source.chunks.reduce((sum, chunk) =>
+                sum + (chunk.endOffset - chunk.startOffset), 0
+            );
+            const rangeStart = source.chunks[0].startOffset / (1024 * 1024);
+            const rangeEnd = source.chunks[source.chunks.length - 1].endOffset / (1024 * 1024);
+            status.textContent = `${source.fileName} — ${entryCount.toLocaleString()} loaded ` +
+                `(${(loadedBytes / 1024).toFixed(0)} KiB, ${rangeStart.toFixed(2)}–${rangeEnd.toFixed(2)} ` +
+                `of ${(source.totalSize / (1024 * 1024)).toFixed(2)} MiB)`;
+        }
     },
 
     clearLogData() {
@@ -480,6 +726,11 @@ const LogfilesViewMixin = {
         this.logKnownLogTypes = [];
         this.logKnownClientIps = [];
         this.logKnownStatusCodes = [];
+        this.logSourceWindows = {
+            agent: this.createLogSourceWindow('agent'),
+            access: this.createLogSourceWindow('access')
+        };
+        this.logWindowLoading = false;
 
         // Reset auto-load state
         this.stopLogAutoRefresh();
@@ -505,9 +756,7 @@ const LogfilesViewMixin = {
         this.updateLogFilterDropdowns();
         this.clearLogFilters();
 
-        // Reset bottom panel
-        this.renderLogGantt([]);
-        this.renderLogWaterfall([], 0, 0);
+        this.updateLogWindowStatus();
 
         Utils.showToast('Log data cleared', 'success');
     },
@@ -678,8 +927,8 @@ const LogfilesViewMixin = {
         const total = this.logAllEntries.length;
         const filtered = this.logFilteredEntries.length;
         el.textContent = total === filtered
-            ? `${total.toLocaleString()} entries`
-            : `${filtered.toLocaleString()} of ${total.toLocaleString()} entries`;
+            ? `${total.toLocaleString()} loaded entries`
+            : `${filtered.toLocaleString()} of ${total.toLocaleString()} loaded entries`;
     },
 
     updateLogVirtualSpacer() {
@@ -708,6 +957,16 @@ const LogfilesViewMixin = {
         const scrollTop = scrollContainer.scrollTop;
         const visibleStart = Math.floor(scrollTop / ROW_HEIGHT);
         const neededStart = Math.max(0, visibleStart - BUFFER_ROWS);
+
+        const hasScrollableRows = this.logFilteredEntries.length > 0 &&
+            scrollContainer.scrollHeight > scrollContainer.clientHeight;
+        if (hasScrollableRows) {
+            if (scrollTop <= ROW_HEIGHT * 3) {
+                this.loadAdjacentLogWindow('older');
+            } else if (scrollTop + scrollContainer.clientHeight >= scrollContainer.scrollHeight - (ROW_HEIGHT * 3)) {
+                this.loadAdjacentLogWindow('newer');
+            }
+        }
 
         // Auto-disable follow tail
         if (this.logFollowTail && !this.isLogScrolledNearBottom()) {
@@ -1388,44 +1647,6 @@ const LogfilesViewMixin = {
         return bytes;
     },
 
-    /**
-     * Read a server file from `startOffset` to EOF, looping past the servlet's
-     * per-request byte cap (~2 MB). Returns the concatenated content trimmed
-     * to the last complete line and the corresponding byte offset to persist.
-     *
-     * @param {string} relPath
-     * @param {number} startOffset
-     * @param {string|undefined} pasoePathOverride
-     * @returns {Promise<{content: string, newOffset: number}>}
-     */
-    async _drainServerFile(relPath, startOffset, pasoePathOverride) {
-        const MAX_ITERATIONS = 64; // hard safety stop (~128 MB)
-        let offset = startOffset;
-        let combined = '';
-
-        for (let i = 0; i < MAX_ITERATIONS; i++) {
-            const chunk = await this.agentService.readServerFile(relPath, {
-                offset,
-                pasoePathOverride
-            });
-            // Made no progress — bail out (file shrank or empty response).
-            if (!chunk.content || chunk.newOffset <= offset) {
-                offset = chunk.newOffset || offset;
-                break;
-            }
-            combined += chunk.content;
-            offset = chunk.newOffset;
-            // Reached end of file as it stood when the chunk was read.
-            if (chunk.totalSize && offset >= chunk.totalSize) {
-                break;
-            }
-        }
-
-        // Align to the last complete line so a write in progress on the server
-        // doesn't get parsed as a truncated entry.
-        return this.trimPartialTrailingLine(combined, offset);
-    },
-
     // ==================== AUTO-LOAD FROM PASOE SERVER ====================
 
     /**
@@ -1496,10 +1717,23 @@ const LogfilesViewMixin = {
                 pasoePath: pasoePathOption
             };
 
-            // 4. Clear existing data for fresh load
+            // 4. Clear existing data for a fresh bounded tail window
             this.logAllEntries = [];
-            this.logAgentLogOffset = 0;
-            this.logAccessLogOffset = 0;
+            this.logFilteredEntries = [];
+            this.logSourceWindows = {
+                agent: {
+                    ...this.createLogSourceWindow('agent'),
+                    relativePath: agentLogRelPath,
+                    fileName: agentLogFileName,
+                    pasoePath: pasoePathOption
+                },
+                access: {
+                    ...this.createLogSourceWindow('access'),
+                    relativePath: accessLogRelPath,
+                    fileName: accessLogFileName,
+                    pasoePath: pasoePathOption
+                }
+            };
 
             // Show resolved filenames immediately
             const agentStatusEl = document.getElementById('logAgentLogStatus');
@@ -1509,10 +1743,10 @@ const LogfilesViewMixin = {
 
             if (statusEl) { statusEl.textContent = 'Loading logs...'; }
 
-            // 5. Load both logs
+            // 5. Load only the newest chunk from both logs
             await this.autoLoadIncremental();
 
-            if (statusEl) { statusEl.textContent = `Loaded (${this.logAllEntries.length} entries)`; }
+            if (statusEl) { statusEl.textContent = `Tail loaded (${this.logAllEntries.length} entries in window)`; }
 
         } catch (e) {
             console.error('Auto-load failed:', e);
@@ -1525,100 +1759,49 @@ const LogfilesViewMixin = {
      * Incrementally load new log data from the server using stored offsets.
      */
     async autoLoadIncremental() {
-        const cfg = this.logAutoLoadConfig;
-        if (!cfg) { return; }
+        if (!this.logAutoLoadConfig || this.logWindowLoading) { return; }
 
-        let newAgentEntries = [];
-        let newAccessEntries = [];
-        let agentLoaded = false;
-        let agentError = null;
-        let accessLoaded = false;
-        let accessError = null;
+        this.logWindowLoading = true;
+        const sources = Object.values(this.logSourceWindows).filter(source =>
+            source.relativePath && (source.chunks.length === 0 || source.atTail)
+        );
+        const initialLoad = sources.some(source => source.chunks.length === 0);
+        let changed = false;
 
-        // Read agent log (incremental from offset). The servlet caps each
-        // response at MAX_READ_BYTES (~2 MB), so we loop until we've drained
-        // the file up to the size reported by the first chunk's X-Total-Size.
         try {
-            const agentLineOffset = this.logAllEntries.filter(e => e.source === 'agent').length;
-            const drained = await this._drainServerFile(
-                cfg.agentLogRelPath,
-                this.logAgentLogOffset,
-                cfg.pasoePath
-            );
-            agentLoaded = true;
-            this.logAgentLogOffset = drained.newOffset;
-            if (drained.content) {
-                newAgentEntries = this.logFileService.parseAgentLog(drained.content);
-                newAgentEntries.forEach(e => { e.lineNumber += agentLineOffset; });
+            const results = await Promise.all(sources.map(async source => {
+                try {
+                    return await this.loadLogSourceChunk(
+                        source,
+                        source.chunks.length === 0 ? 'initial' : 'newer'
+                    );
+                } catch (error) {
+                    const status = document.getElementById(
+                        source.source === 'agent' ? 'logAgentLogStatus' : 'logAccessLogStatus'
+                    );
+                    if (status) {
+                        status.textContent = error.message.includes('404')
+                            ? `${source.fileName} (not found)`
+                            : `${source.fileName} (error)`;
+                    }
+                    if (!error.message.includes('404')) {
+                        console.warn(`[Logfiles] ${source.source} log read error:`, error);
+                    }
+                    return false;
+                }
+            }));
+            changed = results.some(Boolean);
+
+            if (changed || initialLoad) {
+                this.logFollowTail = true;
+                this.updateLogFollowTailButton();
+                this.rebuildLogWindow(null, true);
             }
-        } catch (e) {
-            agentError = e.message;
-            // Agent log may not exist for this date — not an error
-            if (!e.message.includes('404')) {
-                console.warn('Agent log read error:', e.message);
-            }
+            this.updateLogSourceStatuses();
+        } finally {
+            this.logWindowLoading = false;
+            this.updateLogWindowStatus();
         }
-
-        // Read access log (incremental from offset)
-        try {
-            const accessLineOffset = this.logAllEntries.filter(e => e.source === 'access').length;
-            const drained = await this._drainServerFile(
-                cfg.accessLogRelPath,
-                this.logAccessLogOffset,
-                cfg.pasoePath
-            );
-            accessLoaded = true;
-            this.logAccessLogOffset = drained.newOffset;
-            if (drained.content) {
-                newAccessEntries = this.logFileService.parseAccessLog(drained.content);
-                newAccessEntries.forEach(e => { e.lineNumber += accessLineOffset; });
-            }
-        } catch (e) {
-            accessError = e.message;
-            if (!e.message.includes('404')) {
-                console.warn('Access log read error:', e.message);
-            }
-        }
-
-        // Always update status displays (even if no new entries)
-        const agentStatus = document.getElementById('logAgentLogStatus');
-        const accessStatus = document.getElementById('logAccessLogStatus');
-        const agentCount = this.logAllEntries.filter(e => e.source === 'agent').length + newAgentEntries.length;
-        const accessCount = this.logAllEntries.filter(e => e.source === 'access').length + newAccessEntries.length;
-
-        if (agentStatus) {
-            if (agentLoaded) {
-                agentStatus.textContent = `${cfg.agentLogFileName} — ${agentCount.toLocaleString()} entries`;
-            } else if (agentError && agentError.includes('404')) {
-                agentStatus.textContent = `${cfg.agentLogFileName} (not found)`;
-            } else {
-                agentStatus.textContent = `${cfg.agentLogFileName} (error)`;
-            }
-        }
-        if (accessStatus) {
-            if (accessLoaded) {
-                accessStatus.textContent = `${cfg.accessLogFileName} — ${accessCount.toLocaleString()} entries`;
-            } else if (accessError && accessError.includes('404')) {
-                accessStatus.textContent = `${cfg.accessLogFileName} (not found)`;
-            } else {
-                accessStatus.textContent = `${cfg.accessLogFileName} (error)`;
-            }
-        }
-
-        // Merge new entries into existing data
-        const newEntries = [...newAgentEntries, ...newAccessEntries];
-        if (newEntries.length === 0) { return; }
-
-        // Append-only: avoid re-sorting existing rows so the visible scroll position
-        // and rendered page stay stable. Streams are chronological per source; minor
-        // cross-source interleaving is tolerated (matches VS Code extension behavior).
-        this.appendLogEntries(newEntries);
-
-        if (this.logActiveBottomTab === 'waterfall') {
-            this.computeLogWaterfallData();
-        }
-
-        this.hideLogPlaceholder();
     },
 
     /**
@@ -1648,9 +1831,6 @@ const LogfilesViewMixin = {
         if (newFiltered.length > 0) {
             this.logFilteredEntries.push(...newFiltered);
         }
-
-        // Recompute Gantt data (cheap; needed for new PIDs/time ranges).
-        this.computeLogGanttData();
 
         this.logTotalFilteredCount = this.logFilteredEntries.length;
         this.updateLogEntryCount();

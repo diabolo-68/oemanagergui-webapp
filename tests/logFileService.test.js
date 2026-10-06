@@ -76,6 +76,76 @@ describe('LogFileService.mergeEntries', () => {
     });
 });
 
+describe('LogFileService raw chunk windows', () => {
+    it('sorts adjacent chunks and makes duplicate range retries idempotent', () => {
+        let chunks = svc.mergeLogChunk([], {
+            startOffset: 10,
+            endOffset: 20,
+            content: 'second\n'
+        });
+        chunks = svc.mergeLogChunk(chunks, {
+            startOffset: 0,
+            endOffset: 10,
+            content: 'first\n'
+        });
+        chunks = svc.mergeLogChunk(chunks, {
+            startOffset: 10,
+            endOffset: 20,
+            content: 'second\n'
+        });
+
+        expect(chunks).toHaveLength(2);
+        expect(svc.joinLogChunks(chunks)).toBe('first\nsecond\n');
+    });
+
+    it('replaces overlapping chunks instead of duplicating content', () => {
+        const chunks = svc.mergeLogChunk([
+            { startOffset: 0, endOffset: 10, content: 'old\n' }
+        ], {
+            startOffset: 0,
+            endOffset: 12,
+            content: 'replacement\n'
+        });
+
+        expect(chunks).toEqual([
+            { startOffset: 0, endOffset: 12, content: 'replacement\n' }
+        ]);
+    });
+
+    it('retains the active edge when enforcing the chunk budget', () => {
+        const chunks = [
+            { startOffset: 0, endOffset: 10, content: 'a\n' },
+            { startOffset: 10, endOffset: 20, content: 'b\n' },
+            { startOffset: 20, endOffset: 30, content: 'c\n' }
+        ];
+
+        expect(svc.retainLogChunks(chunks, 2, 'older').map(c => c.startOffset))
+            .toEqual([0, 10]);
+        expect(svc.retainLogChunks(chunks, 2, 'newer').map(c => c.startOffset))
+            .toEqual([10, 20]);
+    });
+
+    it('preserves multiline agent entries across adjacent chunk boundaries', () => {
+        const chunks = [
+            {
+                startOffset: 0,
+                endOffset: 100,
+                content: '2026-04-16T12:53:29.667+0200 012360 054540 1 AS-7 ?:?:? APPL first\n'
+            },
+            {
+                startOffset: 100,
+                endOffset: 200,
+                content: 'continued\n2026-04-16T12:53:30.000+0200 012360 054540 1 AS-7 ?:?:? APPL next\n'
+            }
+        ];
+
+        const entries = svc.parseAgentLog(svc.joinLogChunks(chunks));
+
+        expect(entries).toHaveLength(2);
+        expect(entries[0].message).toBe('first\ncontinued');
+    });
+});
+
 describe('LogFileService.extractShortRequestId', () => {
     it('returns the last colon-separated segment', () => {
         expect(svc.extractShortRequestId('ROOT:w:0000e9c2')).toBe('0000e9c2');

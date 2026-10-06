@@ -421,11 +421,14 @@
                         <div class="log-toolbar log-auto-toolbar">
                             <div class="log-toolbar-left">
                                 <button class="btn btn-primary btn-sm" id="logBtnAutoLoad" title="Load logs from PASOE server">Auto-Load</button>
+                                <button class="btn btn-secondary btn-sm" id="logBtnOlder" disabled title="Load older log entries">◀ Older</button>
+                                <button class="btn btn-secondary btn-sm" id="logBtnNewer" disabled title="Load newer log entries">Newer ▶</button>
                                 <div class="log-file-group">
                                     <label for="logAutoDate" class="log-file-label">Date</label>
                                     <input type="date" id="logAutoDate" class="log-date-input">
                                 </div>
                                 <span id="logAutoStatus" class="log-file-status"></span>
+                                <span id="logWindowStatus" class="log-window-status">No log window loaded</span>
                             </div>
                             <div class="log-toolbar-right">
                                 <label class="log-auto-refresh-label">
@@ -498,7 +501,7 @@
                                     <div id="logRows"></div>
                                 </div>
                                 <div id="logPlaceholder" class="log-placeholder">
-                                    <p>📋 Upload agent log and/or access log files to begin analysis</p>
+                                    <p>📋 Load a bounded log window to begin analysis</p>
                                 </div>
                             </div>
                         </div>
@@ -513,10 +516,10 @@
                         </div>
 
                         <!-- Resizer -->
-                        <div class="log-resizer" id="logGanttResizer"></div>
+                        <div class="log-resizer hidden" id="logGanttResizer" style="display:none"></div>
 
                         <!-- Bottom panel: Gantt + Flame Chart -->
-                        <div class="log-bottom-panel" id="logBottomPanel">
+                        <div class="log-bottom-panel hidden" id="logBottomPanel" style="display:none">
                             <div class="log-bottom-tabs">
                                 <button class="log-bottom-tab active" id="logTabGantt">PID Timeline</button>
                                 <button class="log-bottom-tab" id="logTabWaterfall">Flame Chart</button>

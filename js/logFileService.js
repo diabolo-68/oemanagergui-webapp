@@ -117,6 +117,64 @@ class LogFileService {
     }
 
     /**
+     * Add or replace a raw byte-range chunk and return a sorted copy.
+     * The range endpoint normally returns adjacent chunks. Replacing overlaps
+     * makes retries idempotent and prevents duplicate log rows.
+     * @param {Array<Object>} chunks
+     * @param {Object} chunk
+     * @returns {Array<Object>}
+     */
+    mergeLogChunk(chunks, chunk) {
+        if (!chunk || !chunk.content || chunk.endOffset <= chunk.startOffset) {
+            return [...chunks];
+        }
+
+        const retained = chunks.filter(existing =>
+            existing.endOffset <= chunk.startOffset || existing.startOffset >= chunk.endOffset
+        );
+        retained.push(chunk);
+        retained.sort((a, b) => a.startOffset - b.startOffset);
+        return retained;
+    }
+
+    /**
+     * Keep a fixed number of chunks around the active navigation edge.
+     * @param {Array<Object>} chunks
+     * @param {number} maxChunks
+     * @param {'older'|'newer'} direction
+     * @returns {Array<Object>}
+     */
+    retainLogChunks(chunks, maxChunks, direction) {
+        if (chunks.length <= maxChunks) {
+            return [...chunks];
+        }
+        return direction === 'older'
+            ? chunks.slice(0, maxChunks)
+            : chunks.slice(chunks.length - maxChunks);
+    }
+
+    /**
+     * Join retained chunks. A newline is inserted across an unexpected gap so
+     * unrelated boundary lines can never be combined into one agent entry.
+     * @param {Array<Object>} chunks
+     * @returns {string}
+     */
+    joinLogChunks(chunks) {
+        const sorted = [...chunks].sort((a, b) => a.startOffset - b.startOffset);
+        let content = '';
+        let previousEnd = null;
+
+        for (const chunk of sorted) {
+            if (previousEnd !== null && previousEnd !== chunk.startOffset && !content.endsWith('\n')) {
+                content += '\n';
+            }
+            content += chunk.content;
+            previousEnd = chunk.endOffset;
+        }
+        return content;
+    }
+
+    /**
      * Extract the short request ID (last segment after ':').
      * Agent log: "AppName:w:0000e9c2" → "0000e9c2"
      * Access log: "ROOT:w:0000e9c2" → "0000e9c2"

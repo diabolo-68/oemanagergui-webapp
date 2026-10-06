@@ -8,6 +8,7 @@ Web-based management interface for OpenEdge PASOE agents and sessions. This is a
 - **Charts View**: Visualize memory usage and request statistics over time
 - **Metrics View**: Display SessionManager metrics and per-agent statistics
 - **PASOE Stats View**: Time-series charts for PASOE performance metrics (memory, connections, requests, reads/writes)
+- **Logfiles View**: Tail-first, bounded-memory agent/access log browsing with backward and forward navigation
 - **Settings View**: Configure trim agent settings and refresh intervals
 
 ### Agent Management
@@ -60,6 +61,16 @@ Web-based management interface for OpenEdge PASOE agents and sessions. This is a
 - Sessions & Agents (Idle Sessions, Busy Sessions, Stopping Agents)
 - Auto-refresh with configurable interval (default: 30 seconds)
 - 2-column responsive layout
+
+### Logfiles
+
+- Opens at the newest complete log entries instead of reading the complete file
+- Loads older or newer chunks on demand by scrolling or using navigation buttons
+- Keeps at most three 256 KiB chunks per source in browser memory
+- Follows appended entries without reloading historical content
+- Handles log truncation and rotation by reopening the newest tail
+- Applies filters and request correlation to the currently loaded window
+- PID timeline and flame-chart analytics are temporarily disabled pending a dedicated view
 
 ## Requirements
 
@@ -156,6 +167,7 @@ Switch between views using the sidebar:
 - **Charts** - Memory and request charts
 - **Metrics** - SessionManager and agent metrics
 - **PASOE Stats** - Performance metrics over time (memory, connections, requests, I/O)
+- **Logfiles** - Bounded tail browsing with older/newer navigation
 - **Settings** - Configure refresh intervals and trim settings
 
 ## Architecture
@@ -164,7 +176,9 @@ Switch between views using the sidebar:
 Browser (HTML/CSS/JS) → PASOE oemanager REST API
 ```
 
-This is a pure static webapp with no backend server. All API calls go directly to PASOE's oemanager REST API using the Fetch API with Basic Authentication.
+Most API calls go directly to PASOE's oemanager REST API using the Fetch API with Basic Authentication.
+A small same-origin servlet provides restricted, bounded file reads inside the PASOE instance directory for the
+logfiles view.
 
 ### File Structure
 

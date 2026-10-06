@@ -129,6 +129,33 @@ function Test-Tool {
     return $cmd.Source
 }
 
+# Run a native command and return its exit code without letting PS 7.3+'s
+# $PSNativeCommandUseErrorActionPreference turn a non-zero exit into a
+# terminating error. Useful for existence/probe-style invocations.
+function Invoke-NativeProbe {
+    param([scriptblock] $Action)
+    $prev = $null
+    if (Get-Variable -Name PSNativeCommandUseErrorActionPreference -Scope Global -ErrorAction SilentlyContinue) {
+        $prev = $Global:PSNativeCommandUseErrorActionPreference
+        $Global:PSNativeCommandUseErrorActionPreference = $false
+    }
+    $prevEap = $ErrorActionPreference
+    $ErrorActionPreference = 'Continue'
+    try {
+        & $Action 2>$null 1>$null
+        return $LASTEXITCODE
+    }
+    catch {
+        return 1
+    }
+    finally {
+        $ErrorActionPreference = $prevEap
+        if ($null -ne $prev) {
+            $Global:PSNativeCommandUseErrorActionPreference = $prev
+        }
+    }
+}
+
 # ---- task implementations -------------------------------------------------
 function Task-Install {
     Test-Tool 'npm' | Out-Null
@@ -257,11 +284,21 @@ function Get-ChangelogSection {
 }
 
 function Test-WorkingTreeClean {
-    $status = git status --porcelain 2>$null
-    if ($LASTEXITCODE -ne 0) {
-        throw "Failed to query git status. Is this a git repository?"
+    $prev = $null
+    if (Get-Variable -Name PSNativeCommandUseErrorActionPreference -Scope Global -ErrorAction SilentlyContinue) {
+        $prev = $Global:PSNativeCommandUseErrorActionPreference
+        $Global:PSNativeCommandUseErrorActionPreference = $false
     }
-    return [string]::IsNullOrWhiteSpace($status)
+    try {
+        $status = git status --porcelain 2>$null
+        if ($LASTEXITCODE -ne 0) {
+            throw "Failed to query git status. Is this a git repository?"
+        }
+        return [string]::IsNullOrWhiteSpace($status)
+    }
+    finally {
+        if ($null -ne $prev) { $Global:PSNativeCommandUseErrorActionPreference = $prev }
+    }
 }
 
 function Task-Release {
@@ -269,8 +306,8 @@ function Task-Release {
     Test-Tool 'gh'  | Out-Null
 
     Write-Section 'Verify GitHub CLI authentication'
-    gh auth status 1>$null 2>$null
-    if ($LASTEXITCODE -ne 0) {
+    $authExit = Invoke-NativeProbe { gh auth status }
+    if ($authExit -ne 0) {
         throw "GitHub CLI is not authenticated. Run 'gh auth login' first."
     }
     Write-Ok 'gh is authenticated.'
@@ -289,8 +326,8 @@ function Task-Release {
     }
 
     # Abort early if the release already exists on GitHub.
-    gh release view $tagName 1>$null 2>$null
-    if ($LASTEXITCODE -eq 0) {
+    $viewExit = Invoke-NativeProbe { gh release view $tagName }
+    if ($viewExit -eq 0) {
         throw "GitHub release '$tagName' already exists. Bump the version or delete it first."
     }
 
@@ -308,8 +345,8 @@ function Task-Release {
     }
 
     # Create the local tag if it doesn't already exist.
-    git rev-parse -q --verify ("refs/tags/{0}" -f $tagName) 1>$null 2>$null
-    if ($LASTEXITCODE -eq 0) {
+    $tagExit = Invoke-NativeProbe { git rev-parse -q --verify ("refs/tags/{0}" -f $tagName) }
+    if ($tagExit -eq 0) {
         Write-Info "Local tag '$tagName' already exists; reusing it."
     } else {
         Invoke-Step "Create git tag $tagName" {

@@ -71,6 +71,98 @@ describe('config helpers', () => {
     });
 });
 
+describe('readServerFile', () => {
+    it('preserves the legacy offset contract for configuration files', async () => {
+        globalThis.fetch.mockResolvedValueOnce({
+            ...makeOkResponse('properties'),
+            headers: {
+                get: name => ({
+                    'X-Start-Offset': '0',
+                    'X-New-Offset': '10',
+                    'X-Total-Size': '10'
+                })[name] ?? null
+            }
+        });
+
+        const result = await svc.readServerFile('conf/openedge.properties');
+        const url = new URL(globalThis.fetch.mock.calls[0][0]);
+
+        expect(url.searchParams.get('path')).toBe('conf/openedge.properties');
+        expect(url.searchParams.get('offset')).toBe('0');
+        expect(url.searchParams.has('direction')).toBe(false);
+        expect(result).toMatchObject({
+            content: 'properties',
+            startOffset: 0,
+            newOffset: 10,
+            totalSize: 10,
+            hasOlder: false,
+            hasNewer: false,
+            fileTruncated: false
+        });
+    });
+
+    it('sends bounded backward options and parses range metadata', async () => {
+        const headers = {
+            'X-Start-Offset': '750',
+            'X-New-Offset': '1000',
+            'X-Total-Size': '1200',
+            'X-Has-Older': 'true',
+            'X-Has-Newer': 'true',
+            'X-File-Truncated': 'false'
+        };
+        globalThis.fetch.mockResolvedValueOnce({
+            ...makeOkResponse('chunk\n'),
+            headers: { get: name => headers[name] ?? null }
+        });
+
+        const result = await svc.readServerFile('logs/agent.log', {
+            direction: 'backward',
+            offset: 1000,
+            maxBytes: 256,
+            pasoePathOverride: 'C:\\pasoe'
+        });
+        const [requestUrl, options] = globalThis.fetch.mock.calls[0];
+        const url = new URL(requestUrl);
+
+        expect(url.searchParams.get('direction')).toBe('backward');
+        expect(url.searchParams.get('offset')).toBe('1000');
+        expect(url.searchParams.get('maxBytes')).toBe('256');
+        expect(options.headers['X-Pasoe-Path']).toBe('C:\\pasoe');
+        expect(result).toEqual({
+            content: 'chunk\n',
+            startOffset: 750,
+            newOffset: 1000,
+            totalSize: 1200,
+            hasOlder: true,
+            hasNewer: true,
+            fileTruncated: false
+        });
+    });
+
+    it('omits the offset for an initial tail read', async () => {
+        globalThis.fetch.mockResolvedValueOnce(makeOkResponse(''));
+
+        await svc.readServerFile('logs/agent.log', {
+            direction: 'backward',
+            maxBytes: 1024
+        });
+        const url = new URL(globalThis.fetch.mock.calls[0][0]);
+
+        expect(url.searchParams.has('offset')).toBe(false);
+        expect(url.searchParams.get('direction')).toBe('backward');
+    });
+
+    it('surfaces bounded read failures', async () => {
+        globalThis.fetch.mockResolvedValueOnce(makeErrResponse(416, 'invalid range', 'Range'));
+
+        await expect(svc.readServerFile('logs/agent.log', {
+            direction: 'forward',
+            offset: 10,
+            maxBytes: 100
+        })).rejects.toThrow(/416 invalid range/);
+    });
+});
+
 describe('fetchApplications', () => {
     it('maps result.Application to {name,version,description}', async () => {
         globalThis.fetch.mockResolvedValueOnce(makeOkResponse({
@@ -339,7 +431,15 @@ describe('file reader API', () => {
             text: async () => 'file-content'
         });
         const out = await svc.readServerFile('conf/openedge.properties', { offset: 64, pasoePathOverride: '/p' });
-        expect(out).toEqual({ content: 'file-content', newOffset: 128, totalSize: 1024 });
+        expect(out).toEqual({
+            content: 'file-content',
+            startOffset: 0,
+            newOffset: 128,
+            totalSize: 1024,
+            hasOlder: false,
+            hasNewer: false,
+            fileTruncated: false
+        });
         const [url, opts] = globalThis.fetch.mock.calls[0];
         expect(url).toContain('path=conf%2Fopenedge.properties');
         expect(url).toContain('offset=64');

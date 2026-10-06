@@ -4,6 +4,16 @@ All notable changes to the OE Manager GUI webapp will be documented in this file
 
 Check [Keep a Changelog](http://keepachangelog.com/) for recommendations on how to structure this file.
 
+## [Unreleased]
+
+### Changed
+- Logfiles now open at the tail and load older/newer complete-line chunks on demand instead of retaining the full file.
+- Log filters and request correlation now explicitly cover the bounded loaded window.
+- PID timeline and flame-chart panels are temporarily disabled pending a dedicated analytics view.
+
+### Fixed
+- Bounded logfile reads prevent large agent and access logs from exhausting Tomcat or browser memory.
+
 ## [1.1.1] - 2026-01-28
 
 ### Fixed
