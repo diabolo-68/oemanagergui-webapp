@@ -49,6 +49,7 @@ const ChartsViewMixin = {
      */
     async loadChartsData() {
         if (!this.selectedApplication) return;
+        if (!Utils.ensureChartLibrary()) return;
         this.ensureChartLegendState();
         
         try {
@@ -56,28 +57,20 @@ const ChartsViewMixin = {
 
             // Fetch agents with their sessions (like VS Code extension)
             const agentsWithSessions = await this.agentService.fetchAgentsWithSessions(applicationName);
-
-            // Per-agent metrics feed the legend; a failure keeps the last known metrics
-            const metricsResults = await Promise.allSettled(
-                agentsWithSessions.map(agent => this.agentService.fetchAgentMetrics(applicationName, agent.agentId))
-            );
             if (applicationName !== this.selectedApplication) return;
             
             // Update per-session time-series data
             const currentTime = new Date();
             this.chartRefreshTick++;
-            agentsWithSessions.forEach((agent, index) => {
+            agentsWithSessions.forEach(agent => {
                 const agentId = agent.agentId;
+                // Metrics arrive separately (refreshChartAgentMetrics) so a slow agent never delays the charts
                 const previous = this.chartAgentInfo.get(agentId);
-                const result = metricsResults[index];
-                const metrics = result.status === 'fulfilled'
-                    ? (result.value?.result?.AgentStatHist?.[0] ?? {})
-                    : (previous?.metrics ?? {});
                 this.chartAgentInfo.set(agentId, {
                     agentId,
                     pid: agent.pid ?? agent.PID ?? '',
                     state: agent.state ?? agent.State ?? '',
-                    metrics,
+                    metrics: previous?.metrics ?? {},
                     lastSeenTick: this.chartRefreshTick
                 });
 
@@ -122,9 +115,37 @@ const ChartsViewMixin = {
 
             // Update all charts
             this.updateCharts(agentsWithSessions);
+
+            this.chartMetricsPromise = this.refreshChartAgentMetrics(applicationName, agentsWithSessions);
             
         } catch (error) {
-            console.error('Error loading charts data:', error);
+            Utils.reportChartProblem(`Failed to update charts: ${error.message}`);
+        }
+    },
+
+    /**
+     * Fetch per-agent metrics for the legend. Runs after the charts are drawn and skips a tick
+     * while the previous request is still pending; a failure keeps the last known metrics.
+     */
+    async refreshChartAgentMetrics(applicationName, agents) {
+        if (this._chartMetricsLoading) return;
+        this._chartMetricsLoading = true;
+        try {
+            const results = await Promise.allSettled(
+                agents.map(agent => this.agentService.fetchAgentMetrics(applicationName, agent.agentId))
+            );
+            if (applicationName !== this.selectedApplication) return;
+
+            results.forEach((result, index) => {
+                const info = this.chartAgentInfo.get(agents[index].agentId);
+                if (info && result.status === 'fulfilled') {
+                    info.metrics = result.value?.result?.AgentStatHist?.[0] ?? {};
+                }
+            });
+            this.chartLegendInfo = this.buildChartLegendInfo();
+            this.renderChartLegends();
+        } finally {
+            this._chartMetricsLoading = false;
         }
     },
 

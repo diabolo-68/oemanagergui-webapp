@@ -6,6 +6,10 @@ Check [Keep a Changelog](http://keepachangelog.com/) for recommendations on how 
 
 ## [Unreleased]
 
+### Fixed
+- **Charts / PASOE Stats stay blank**: Chart.js and its date adapter are now bundled in `js/vendor/` instead of being loaded from a CDN, so charts work on servers without internet access. If the library is missing or a chart update fails, an error toast is shown instead of failing silently.
+- **Charts**: A slow per-agent metrics request no longer delays drawing the charts; it only refreshes the legend afterwards.
+
 ## [1.3.0] - 2026-10-06
 
 Ports the oemanagergui VS Code extension releases 1.14.0, 1.15.0 and 1.16.0.

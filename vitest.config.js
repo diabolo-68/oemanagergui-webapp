@@ -20,7 +20,7 @@ export default defineConfig({
             provider: 'istanbul',
             reporter: ['text', 'html', 'lcov'],
             include: ['js/**/*.js'],
-            exclude: ['js/**/*.test.js'],
+            exclude: ['js/**/*.test.js', 'js/vendor/**'],
             thresholds: {
                 statements: 60,
                 branches: 50,

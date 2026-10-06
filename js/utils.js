@@ -109,6 +109,29 @@ class Utils {
         return `${minutes}m ${seconds}s`;
     }
 
+    // ==================== Chart diagnostics ====================
+
+    /**
+     * Tell the user when a chart view cannot draw. Repeats of the same message are suppressed
+     * so auto-refresh does not keep replacing the toast.
+     */
+    static reportChartProblem(message) {
+        console.error('[Charts]', message);
+        if (Utils._lastChartProblem === message) return;
+        Utils._lastChartProblem = message;
+        Utils.showToast(message, 'error');
+    }
+
+    /**
+     * Check that Chart.js is available before building charts.
+     * @returns {boolean}
+     */
+    static ensureChartLibrary() {
+        if (typeof Chart !== 'undefined') return true;
+        Utils.reportChartProblem('Chart.js is not loaded - charts cannot be drawn');
+        return false;
+    }
+
     // ==================== Time-axis helpers (Lifecycles charts) ====================
 
     /**

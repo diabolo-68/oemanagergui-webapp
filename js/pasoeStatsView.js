@@ -24,6 +24,7 @@ const PasoeStatsViewMixin = {
      */
     async loadPasoeStatsData() {
         if (!this.selectedApplication) return;
+        if (!Utils.ensureChartLibrary()) return;
         
         try {
             // Fetch SessionManager metrics and agents in parallel
@@ -144,7 +145,7 @@ const PasoeStatsViewMixin = {
             this.updatePasoeStatsCharts();
             
         } catch (error) {
-            console.error('Error loading PASOE stats data:', error);
+            Utils.reportChartProblem(`Failed to load PASOE stats: ${error.message}`);
         }
     },
 

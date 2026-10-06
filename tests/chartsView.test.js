@@ -55,6 +55,7 @@ describe('ChartsViewMixin.loadChartsData legend bookkeeping', () => {
         app.agentService.fetchAgentsWithSessions.mockResolvedValue([agent('A1', [session(4), session(5)])]);
 
         await app.loadChartsData();
+        await app.chartMetricsPromise;
 
         expect(app.chartHistoryData.get('A1-4')).toHaveLength(1);
         const [legendAgent] = app.chartLegendInfo.agents;
@@ -67,11 +68,24 @@ describe('ChartsViewMixin.loadChartsData legend bookkeeping', () => {
     it('keeps the last known metrics when a metrics request fails', async () => {
         app.agentService.fetchAgentsWithSessions.mockResolvedValue([agent('A1', [session(4)])]);
         await app.loadChartsData();
+        await app.chartMetricsPromise;
 
         app.agentService.fetchAgentMetrics.mockRejectedValue(new Error('down'));
         await app.loadChartsData();
+        await app.chartMetricsPromise;
 
         expect(app.chartLegendInfo.agents[0].metrics).toMatchObject({ ActiveThreads: 4 });
+    });
+
+    it('records history and updates charts without waiting for slow agent metrics', async () => {
+        app.agentService.fetchAgentsWithSessions.mockResolvedValue([agent('A1', [session(4)])]);
+        app.agentService.fetchAgentMetrics.mockReturnValue(new Promise(() => {}));
+        app.updateCharts = vi.fn();
+
+        await app.loadChartsData();
+
+        expect(app.updateCharts).toHaveBeenCalledTimes(1);
+        expect(app.chartHistoryData.get('A1-4')).toHaveLength(1);
     });
 
     it('removes a session from history and legend once it left the 200-point window', async () => {
