@@ -232,6 +232,27 @@ class AgentService {
     }
 
     /**
+     * Fetch the status summary (threads, sessions, connections, requests) for a specific agent
+     * @returns {Promise<Object>} The `result` object of the status response
+     */
+    async fetchAgentStatus(applicationName, agentId) {
+        const url = this.apiUrl(`/applications/${applicationName}/agents/${agentId}/status`);
+        this.log('Fetching agent status:', url);
+
+        const response = await fetch(url, {
+            method: 'GET',
+            headers: this.getHeaders()
+        });
+
+        if (!response.ok) {
+            throw new Error(`Failed to fetch agent status: ${response.status} ${response.statusText}`);
+        }
+
+        const data = await response.json();
+        return data?.result ?? {};
+    }
+
+    /**
      * Fetch connections for a specific agent
      */
     async fetchAgentConnections(applicationName, agentId) {

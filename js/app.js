@@ -48,6 +48,9 @@ class OeManagerApp {
         // Metrics view state
         this.metricsData = {};
         this.includeRequests = false;  // Toggle for including requests in metrics view
+        this.metricsPaused = false;
+        this.metricsLastUpdated = null;
+        this.metricsRefreshTimer = null;
         
         // PASOE Stats view state
         this.pasoeStatsHistory = [];  // Time-series history for PASOE stats
@@ -76,7 +79,9 @@ class OeManagerApp {
             requests: this.config.requestsRefreshSec || 5,
             charts: this.config.chartsRefreshSec || 10,
             pasoeStats: this.config.pasoeStatsRefreshSec || 30,
-            logs: this.config.logRefreshSec || 5
+            logs: this.config.logRefreshSec || 5,
+            // 0 disables auto-refresh, so only fall back when unset
+            metrics: this.config.metricsRefreshSec ?? 10
         };
         
         // Initialize UI
@@ -103,6 +108,8 @@ class OeManagerApp {
                     chartsRefreshSec: config.chartsRefreshSec || 10,
                     pasoeStatsRefreshSec: config.pasoeStatsRefreshSec || 30,
                     logRefreshSec: config.logRefreshSec || 5,
+                    metricsRefreshSec: config.metricsRefreshSec ?? 10,
+                    flameChartWarnThreshold: config.flameChartWarnThreshold ?? 20000,
                     pasoePathOverride: config.pasoePathOverride || ''
                 };
             }
@@ -119,6 +126,8 @@ class OeManagerApp {
             chartsRefreshSec: 10,
             pasoeStatsRefreshSec: 30,
             logRefreshSec: 5,
+            metricsRefreshSec: 10,
+            flameChartWarnThreshold: 20000,
             pasoePathOverride: ''
         };
     }
@@ -155,6 +164,8 @@ class OeManagerApp {
             chartsRefreshSec: this.refreshIntervals.charts,
             pasoeStatsRefreshSec: this.refreshIntervals.pasoeStats,
             logRefreshSec: this.refreshIntervals.logs,
+            metricsRefreshSec: this.refreshIntervals.metrics,
+            flameChartWarnThreshold: this.config.flameChartWarnThreshold,
             pasoePathOverride: this.config.pasoePathOverride || ''
         };
         localStorage.setItem('oemanager.config', JSON.stringify(toStore));
@@ -230,8 +241,15 @@ class OeManagerApp {
         });
 
         // Metrics view buttons
+        document.getElementById('chartsView')?.addEventListener('click', (e) => this.handleChartLegendClick(e));
         document.getElementById('refreshMetricsBtn')?.addEventListener('click', () => this.loadMetricsData());
+        document.getElementById('pauseMetricsBtn')?.addEventListener('click', () => this.toggleMetricsPause());
         document.getElementById('resetStatsBtn')?.addEventListener('click', () => this.resetAllStatistics());
+        document.getElementById('metricsContainer')?.addEventListener('click', (e) => this.handleMetricsClick(e));
+        document.getElementById('sessionManagerHeader')?.addEventListener('click', (e) => {
+            document.getElementById('sessionManagerContent')?.classList.toggle('expanded');
+            e.currentTarget.querySelector('.collapse-icon')?.classList.toggle('collapsed');
+        });
         
         // Include Requests checkbox
         document.getElementById('chkIncludeRequests')?.addEventListener('change', (e) => {
@@ -404,6 +422,12 @@ class OeManagerApp {
             return;
         }
 
+        // Handle lifecycles view (streams logs itself; shows a hint when not connected)
+        if (viewName === 'lifecycles') {
+            this.loadLifecyclesView();
+            return;
+        }
+
         // Start appropriate timers and load data
         if (this.isConnected && this.selectedApplication) {
             switch (viewName) {
@@ -422,6 +446,7 @@ class OeManagerApp {
                     break;
                 case 'metrics':
                     this.loadMetricsData();
+                    this.startMetricsAutoRefresh();
                     break;
                 case 'pasoeStats':
                     // Update application name in header
@@ -469,6 +494,8 @@ class OeManagerApp {
         document.getElementById('chartsRefreshSec').value = this.refreshIntervals.charts;
         document.getElementById('pasoeStatsRefreshSec').value = this.refreshIntervals.pasoeStats;
         document.getElementById('logRefreshSec').value = this.refreshIntervals.logs;
+        document.getElementById('metricsRefreshSec').value = this.refreshIntervals.metrics;
+        document.getElementById('flameChartWarnThreshold').value = this.config.flameChartWarnThreshold;
         document.getElementById('pasoePathOverride').value = this.config.pasoePathOverride || '';
         this.detectPasoePath();
     }
@@ -487,6 +514,10 @@ class OeManagerApp {
         this.refreshIntervals.charts = parseInt(document.getElementById('chartsRefreshSec').value) || 10;
         this.refreshIntervals.pasoeStats = parseInt(document.getElementById('pasoeStatsRefreshSec').value) || 30;
         this.refreshIntervals.logs = parseInt(document.getElementById('logRefreshSec').value) || 5;
+        const metricsSec = parseInt(document.getElementById('metricsRefreshSec').value, 10);
+        this.refreshIntervals.metrics = Number.isNaN(metricsSec) ? 10 : Math.max(0, metricsSec);
+        const flameThreshold = parseInt(document.getElementById('flameChartWarnThreshold').value, 10);
+        this.config.flameChartWarnThreshold = Number.isNaN(flameThreshold) ? 20000 : Math.max(0, flameThreshold);
 
         // Update PASOE path override
         this.config.pasoePathOverride = document.getElementById('pasoePathOverride').value.trim();
@@ -618,8 +649,8 @@ class OeManagerApp {
         this.selectedAgentStatus = '';
         this.sessions = [];
         
-        // Clear chart history data
-        this.chartHistoryData.clear();
+        // Clear chart history data (and legend caches)
+        this.clearChartHistory();
         
         // Clear PASOE stats history
         this.clearPasoeStatsHistory();
@@ -627,11 +658,15 @@ class OeManagerApp {
         // Destroy existing chart instances to reset them
         this.destroyCharts();
 
+        if (typeof this.clearMetricsView === 'function') { this.clearMetricsView(); }
+
         // Reset auto-load attempt flags so the new app's logs auto-load on view open
         this._logfilesAutoLoadAttempted = false;
         this._ablAutoLoadAttempted = false;
         if (typeof this.stopLogAutoRefresh === 'function') { this.stopLogAutoRefresh(); }
         this.logAutoLoadConfig = null;
+
+        if (typeof this.resetLifecyclesState === 'function') { this.resetLifecyclesState(); }
 
         // Reload current view
         this.switchView(this.currentView);
@@ -696,8 +731,9 @@ class OeManagerApp {
         this.selectedAgentId = '';
         this.sessions = [];
         this.requests = [];
-        this.chartHistoryData.clear();
+        this.clearChartHistory();
         this.metricsData = {};
+        if (typeof this.resetLifecyclesState === 'function') { this.resetLifecyclesState(); }
         
         // Reset UI
         this.updateLoginUI(false);
@@ -714,8 +750,7 @@ class OeManagerApp {
             '<tr><td colspan="5" class="empty-state">Select an agent to view sessions</td></tr>';
         document.getElementById('requestsTableBody').innerHTML = 
             '<tr><td colspan="6" class="empty-state">Login to view running queries</td></tr>';
-        document.getElementById('metricsContainer').innerHTML = 
-            '<div class="placeholder"><p>Login to view metrics</p></div>';
+        if (typeof this.clearMetricsView === 'function') { this.clearMetricsView('Login to view metrics'); }
         
         // Update counts
         document.getElementById('agentCount').textContent = '0';
@@ -848,6 +883,8 @@ class OeManagerApp {
         this.stopRequestsAutoRefresh();
         this.stopChartsAutoRefresh();
         this.stopPasoeStatsAutoRefresh();
+        if (typeof this.stopMetricsAutoRefresh === 'function') { this.stopMetricsAutoRefresh(); }
+        if (typeof this.stopLifecyclesActivity === 'function') { this.stopLifecyclesActivity(); }
     }
 }
 
@@ -863,6 +900,7 @@ if (typeof AgentsViewMixin !== 'undefined') {
     Object.assign(OeManagerApp.prototype, PasoeStatsViewMixin);
     Object.assign(OeManagerApp.prototype, AblObjectsViewMixin);
     Object.assign(OeManagerApp.prototype, LogfilesViewMixin);
+    Object.assign(OeManagerApp.prototype, LifecyclesViewMixin);
 
     // Auto-instantiate when running in the browser.
     // eslint-disable-next-line no-unused-vars

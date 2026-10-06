@@ -15,6 +15,23 @@ const AGENT_LOG_REGEX = /^(?<timestamp>\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3
 // 192.168.18.38 - hulk1@de.ivnet.ch [2026-04-16T17:21:59.753+02:00] "GET /web/... HTTP/1.1" 200 - ROOT:w:0000e9c2 85
 const ACCESS_LOG_REGEX = /^(?<clientIp>\S+)\s+\S+\s+(?<user>\S+)\s+\[(?<timestamp>[^\]]+)\]\s+"(?<method>\S+)\s+(?<url>\S+)\s+(?<protocol>[^"]+)"\s+(?<statusCode>\d+)\s+(?<responseSize>\S+)\s+(?<appRequestId>\S+)\s+(?<responseTime>\d+)\s*$/;
 
+const PLACEHOLDER_SESSION_IDS = new Set(['', '-', '--', '?']);
+const PLACEHOLDER_REQUEST_IDS = new Set(['', '-', '?:?:?']);
+
+function compareNumericStrings(a, b) {
+    return parseInt(a, 10) - parseInt(b, 10);
+}
+
+// Orders AS-2 before AS-10; falls back to locale order for non-numeric ids.
+function compareSessionIds(a, b) {
+    const numA = parseInt(a.replace(/\D+/g, ''), 10);
+    const numB = parseInt(b.replace(/\D+/g, ''), 10);
+    if (!isNaN(numA) && !isNaN(numB) && numA !== numB) {
+        return numA - numB;
+    }
+    return a.localeCompare(b);
+}
+
 class LogFileService {
 
     /**
@@ -241,6 +258,12 @@ class LogFileService {
                 return false;
             }
 
+            // ABL session filter (agent entries only)
+            if (filters.agentSessionId && (entry.source !== 'agent' ||
+                entry.agentSessionId.toLowerCase() !== filters.agentSessionId.toLowerCase())) {
+                return false;
+            }
+
             // Log entry type filter (agent entries only)
             if (filters.logEntryType && entry.source === 'agent' && entry.logEntryType !== filters.logEntryType) {
                 return false;
@@ -308,6 +331,97 @@ class LogFileService {
             return null;
         }
         return parseInt(match[1], 10) * 3600 + parseInt(match[2], 10) * 60 + parseInt(match[3], 10);
+    }
+
+    // ==================== Lifecycles ====================
+
+    /**
+     * Create an empty accumulator for incremental lifecycle building.
+     * @returns {Map<string, Object>} pid -> mutable agent range
+     */
+    createLifecycleAccumulator() {
+        return new Map();
+    }
+
+    /**
+     * Fold agent log entries into the accumulator (first/last seen per PID and ABL session).
+     * @param {Map<string, Object>} agents - Accumulator from createLifecycleAccumulator
+     * @param {Array<Object>} entries - Agent and/or access entries; access entries are ignored
+     */
+    addLifecycleEntries(agents, entries) {
+        for (const entry of entries) {
+            if (entry.source !== 'agent' || !entry.processId) { continue; }
+            const sec = this.timestampToSeconds(entry.timestamp);
+            if (sec === null) { continue; }
+
+            let agent = agents.get(entry.processId);
+            if (!agent) {
+                agent = { startSec: sec, endSec: sec, entryCount: 0, agentNumbers: new Set(), sessions: new Map() };
+                agents.set(entry.processId, agent);
+            }
+            this.extendLifecycleRange(agent, sec);
+            agent.agentNumbers.add(entry.agentNumber);
+
+            const sessionId = entry.agentSessionId ?? '';
+            if (PLACEHOLDER_SESSION_IDS.has(sessionId)) { continue; }
+
+            let session = agent.sessions.get(sessionId);
+            if (!session) {
+                session = { startSec: sec, endSec: sec, entryCount: 0, requestIds: new Set(), errorCount: 0 };
+                agent.sessions.set(sessionId, session);
+            }
+            this.extendLifecycleRange(session, sec);
+            if (!PLACEHOLDER_REQUEST_IDS.has(entry.appRequestId)) {
+                session.requestIds.add(entry.appRequestId);
+            }
+            if ((entry.logEntryType || '').toUpperCase().startsWith('ERR')) {
+                session.errorCount++;
+            }
+        }
+    }
+
+    extendLifecycleRange(range, sec) {
+        range.startSec = Math.min(range.startSec, sec);
+        range.endSec = Math.max(range.endSec, sec);
+        range.entryCount++;
+    }
+
+    /**
+     * Convert an accumulator into sorted, immutable lifecycle objects.
+     * @param {Map<string, Object>} agents
+     * @returns {Array<Object>} AgentLifecycle[] sorted by numeric PID
+     */
+    snapshotLifecycles(agents) {
+        return [...agents.entries()]
+            .sort(([a], [b]) => compareNumericStrings(a, b))
+            .map(([pid, agent]) => ({
+                pid,
+                startSec: agent.startSec,
+                endSec: agent.endSec,
+                agentNumbers: [...agent.agentNumbers].sort(compareNumericStrings),
+                entryCount: agent.entryCount,
+                sessions: [...agent.sessions.entries()]
+                    .sort(([a], [b]) => compareSessionIds(a, b))
+                    .map(([sessionId, session]) => ({
+                        sessionId,
+                        startSec: session.startSec,
+                        endSec: session.endSec,
+                        entryCount: session.entryCount,
+                        requestCount: session.requestIds.size,
+                        errorCount: session.errorCount
+                    }))
+            }));
+    }
+
+    /**
+     * Compute agent (PID) and ABL session lifecycles from agent log entries.
+     * @param {Array<Object>} entries
+     * @returns {Array<Object>} AgentLifecycle[]
+     */
+    buildLifecycles(entries) {
+        const agents = this.createLifecycleAccumulator();
+        this.addLifecycleEntries(agents, entries);
+        return this.snapshotLifecycles(agents);
     }
 
     /**

@@ -215,6 +215,17 @@ describe('LogFileService.filterEntries', () => {
         expect(svc.filterEntries(entries, { searchText: 'foo' })).toHaveLength(1);
         expect(svc.filterEntries(entries, { searchText: '/b' })).toHaveLength(1);
     });
+
+    it('filters by ABL session id (agent entries only, case insensitive)', () => {
+        const withSessions = [
+            { source: 'agent', agentSessionId: 'AS-7', appRequestId: 'a', timestamp: 't1' },
+            { source: 'agent', agentSessionId: 'AS-70', appRequestId: 'b', timestamp: 't2' },
+            { source: 'access', statusCode: 200, clientIp: '1.1.1.1', responseTime: 1, url: '/', method: 'GET', user: '-', appRequestId: 'c', timestamp: 't3' }
+        ];
+        const out = svc.filterEntries(withSessions, { agentSessionId: 'as-7' });
+        expect(out).toHaveLength(1);
+        expect(out[0].agentSessionId).toBe('AS-7');
+    });
 });
 
 describe('LogFileService.timestampToSeconds', () => {
@@ -366,5 +377,87 @@ describe('LogFileService.toRelativePath', () => {
     it('returns the original path when not under base', () => {
         expect(svc.toRelativePath('/var/other/foo.log', '/opt/pasoe'))
             .toBe('/var/other/foo.log');
+    });
+});
+
+describe('LogFileService lifecycles', () => {
+    function agentEntry(time, pid, session, extra = {}) {
+        return {
+            source: 'agent',
+            timestamp: `2026-04-16T${time}.000+0200`,
+            processId: pid,
+            agentNumber: '1',
+            agentSessionId: session,
+            appRequestId: '?:?:?',
+            logEntryType: 'APPL',
+            ...extra
+        };
+    }
+
+    it('builds first/last seen ranges per PID and ABL session', () => {
+        const out = svc.buildLifecycles([
+            agentEntry('10:00:00', '200', 'AS-1'),
+            agentEntry('10:05:00', '200', 'AS-1', { appRequestId: 'ROOT:w:1' }),
+            agentEntry('10:10:00', '200', 'AS-2'),
+            agentEntry('09:00:00', '100', 'AS-1')
+        ]);
+
+        expect(out.map(a => a.pid)).toEqual(['100', '200']);
+        const agent = out[1];
+        expect(agent.startSec).toBe(36000);
+        expect(agent.endSec).toBe(36600);
+        expect(agent.entryCount).toBe(3);
+        expect(agent.sessions.map(s => s.sessionId)).toEqual(['AS-1', 'AS-2']);
+        expect(agent.sessions[0]).toMatchObject({ startSec: 36000, endSec: 36300, entryCount: 2, requestCount: 1 });
+    });
+
+    it('ignores access entries, placeholder sessions and placeholder request ids', () => {
+        const out = svc.buildLifecycles([
+            { source: 'access', timestamp: '2026-04-16T10:00:00.000+0200' },
+            agentEntry('10:00:00', '200', '-'),
+            agentEntry('10:01:00', '200', 'AS-1', { appRequestId: '-' })
+        ]);
+
+        expect(out).toHaveLength(1);
+        expect(out[0].sessions).toHaveLength(1);
+        expect(out[0].sessions[0].requestCount).toBe(0);
+    });
+
+    it('counts ERROR-type lines as session errors', () => {
+        const out = svc.buildLifecycles([
+            agentEntry('10:00:00', '200', 'AS-1', { logEntryType: 'ERROR' }),
+            agentEntry('10:00:01', '200', 'AS-1', { logEntryType: 'ERR' }),
+            agentEntry('10:00:02', '200', 'AS-1')
+        ]);
+        expect(out[0].sessions[0].errorCount).toBe(2);
+    });
+
+    it('sorts PIDs numerically and sessions by their number', () => {
+        const out = svc.buildLifecycles([
+            agentEntry('10:00:00', '1000', 'AS-10'),
+            agentEntry('10:00:00', '1000', 'AS-2'),
+            agentEntry('10:00:00', '99', 'AS-1')
+        ]);
+        expect(out.map(a => a.pid)).toEqual(['99', '1000']);
+        expect(out[1].sessions.map(s => s.sessionId)).toEqual(['AS-2', 'AS-10']);
+    });
+
+    it('accumulates incrementally across chunks like a single build', () => {
+        const first = [agentEntry('10:00:00', '200', 'AS-1')];
+        const second = [agentEntry('10:30:00', '200', 'AS-1'), agentEntry('10:31:00', '300', 'AS-1')];
+
+        const acc = svc.createLifecycleAccumulator();
+        svc.addLifecycleEntries(acc, first);
+        svc.addLifecycleEntries(acc, second);
+
+        expect(svc.snapshotLifecycles(acc)).toEqual(svc.buildLifecycles([...first, ...second]));
+    });
+
+    it('collects agent numbers for a PID', () => {
+        const out = svc.buildLifecycles([
+            agentEntry('10:00:00', '200', 'AS-1', { agentNumber: '2' }),
+            agentEntry('10:00:01', '200', 'AS-1', { agentNumber: '1' })
+        ]);
+        expect(out[0].agentNumbers).toEqual(['1', '2']);
     });
 });

@@ -6,9 +6,10 @@ Web-based management interface for OpenEdge PASOE agents and sessions. This is a
 
 - **Agents View**: Monitor and manage PASOE agents with real-time session and request tracking
 - **Charts View**: Visualize memory usage and request statistics over time
-- **Metrics View**: Display SessionManager metrics and per-agent statistics
+- **Metrics View**: Condensed per-agent statistics table with combined thread, connection and request grids
 - **PASOE Stats View**: Time-series charts for PASOE performance metrics (memory, connections, requests, reads/writes)
 - **Logfiles View**: Tail-first, bounded-memory agent/access log browsing with backward and forward navigation
+- **Lifecycles View**: Agent (PID) and ABL session lifecycles derived from the agent log, with request and session flame charts
 - **Settings View**: Configure trim agent settings and refresh intervals
 
 ### Agent Management
@@ -32,6 +33,10 @@ Web-based management interface for OpenEdge PASOE agents and sessions. This is a
 
 - Memory usage over time (heap memory)
 - Request statistics (completed vs failed)
+- Optional legend per time-series chart: hover the legend icon to preview, click to pin
+  - Grouped by agent (ID, PID, state, memory, threads, sessions, requests, durations) with every session's color, state, start time and current value
+  - Click a session row to show or hide its line; each session keeps its color across refreshes
+  - Sessions that left the 200-point window are removed from the chart and legend
 - Auto-refresh with configurable intervals
 - Historical data visualization
 
@@ -44,8 +49,9 @@ Web-based management interface for OpenEdge PASOE agents and sessions. This is a
 ![Metrics View 3](resources/metrics-view-3.png)
 
 - SessionManager metrics (sessions, requests, memory)
-- Per-agent metrics with reset capability
-- Real-time updates
+- One summary row per agent (status, memory, active, exited, requests, request durations) with a per-agent Reset button
+- Combined Threads, Connections and Requests grids covering all agents; Request IDs open the Logfiles view
+- Auto-refresh (default 10s, `0` disables) with Pause/Resume and Refresh Now; rows update in place
 
 ### PASOE Stats
 
@@ -70,7 +76,17 @@ Web-based management interface for OpenEdge PASOE agents and sessions. This is a
 - Follows appended entries without reloading historical content
 - Handles log truncation and rotation by reopening the newest tail
 - Applies filters and request correlation to the currently loaded window
-- PID timeline and flame-chart analytics are temporarily disabled pending a dedicated view
+- Filters: source, agent number, PID, ABL session (e.g. `AS-7`), type, client IP, status, min duration, request ID, free text
+
+### Lifecycles
+
+- Shows agent (PID) and ABL session lifecycles for one day, in an expandable **Tree** or **Packed lanes** mode
+- **Min sessions** (default 4) hides agents with fewer sessions
+- Drag or Ctrl+wheel to zoom; all charts share one time window
+- Click a bar to open the Logfiles view filtered by PID, session or request ID (filters cover the loaded window; use **Older** for earlier entries)
+- Optional **Flame Chart** of all HTTP requests of the day, colored by status (loaded only while shown); a warning appears above the *Flame Chart Warning Threshold* setting
+- Optional **Session Flame** chart with one bar per session, colored by agent, red outline for sessions with errors
+- The day's logs are streamed in 2 MiB chunks and only compact aggregates are kept in browser memory
 
 ## Requirements
 
@@ -135,6 +151,9 @@ Click the **Settings** tab in the sidebar to configure:
 | Requests Refresh | Auto-refresh interval for requests (seconds) | 5 |
 | Charts Refresh | Auto-refresh interval for charts (seconds) | 10 |
 | PASOE Stats Refresh | Auto-refresh interval for PASOE stats (seconds) | 30 |
+| Log Files Refresh | Auto-refresh interval for log auto-load and Lifecycles (seconds) | 5 |
+| Agent Metrics Refresh | Auto-refresh interval for agent metrics (seconds, `0` disables) | 10 |
+| Flame Chart Warning Threshold | Warn when a day has more requests than this (`0` disables) | 20000 |
 
 ## Usage
 
@@ -168,6 +187,7 @@ Switch between views using the sidebar:
 - **Metrics** - SessionManager and agent metrics
 - **PASOE Stats** - Performance metrics over time (memory, connections, requests, I/O)
 - **Logfiles** - Bounded tail browsing with older/newer navigation
+- **Lifecycles** - Agent and ABL session lifecycles with flame charts
 - **Settings** - Configure refresh intervals and trim settings
 
 ## Architecture
@@ -193,6 +213,10 @@ oemanagergui/
 │   ├── agentsView.js       # Agents view mixin
 │   ├── chartsView.js       # Charts view mixin
 │   ├── metricsView.js      # Metrics view mixin
+│   ├── logFileService.js   # Log parsing, filtering and lifecycle aggregation
+│   ├── logfilesView.js     # Logfiles view mixin
+│   ├── laneCanvasChart.js  # Canvas lane (flame) chart used by Lifecycles
+│   ├── lifecyclesView.js   # Lifecycles view mixin
 │   ├── templates.js        # HTML templates helper
 │   └── utils.js            # Utility functions
 ├── WEB-INF/

@@ -279,6 +279,23 @@ describe('per-agent fetch endpoints', () => {
         expect(await svc.fetchAgentThreads(APP, 'A1')).toEqual([{ ThreadId: 4 }]);
     });
 
+    it('fetchAgentStatus returns the result object from /status', async () => {
+        globalThis.fetch.mockResolvedValueOnce(makeOkResponse({ result: { threads: 6, sessions: 6, connections: 5, requests: 266 } }));
+        expect(await svc.fetchAgentStatus(APP, 'A1')).toEqual({ threads: 6, sessions: 6, connections: 5, requests: 266 });
+        expect(globalThis.fetch.mock.calls[0][0])
+            .toBe(`${BASE}/oemanager/applications/${APP}/agents/A1/status`);
+    });
+
+    it('fetchAgentStatus returns an empty object when the response has no result', async () => {
+        globalThis.fetch.mockResolvedValueOnce(makeOkResponse({}));
+        expect(await svc.fetchAgentStatus(APP, 'A1')).toEqual({});
+    });
+
+    it('fetchAgentStatus throws on a failed response', async () => {
+        globalThis.fetch.mockResolvedValueOnce(makeErrResponse(500, 'boom', 'Server Error'));
+        await expect(svc.fetchAgentStatus(APP, 'A1')).rejects.toThrow('Failed to fetch agent status: 500');
+    });
+
     it('fetchAgentProperties returns result or full body', async () => {
         globalThis.fetch.mockResolvedValueOnce(makeOkResponse({ result: { foo: 1 } }));
         expect(await svc.fetchAgentProperties(APP)).toEqual({ foo: 1 });

@@ -6,12 +6,29 @@ Check [Keep a Changelog](http://keepachangelog.com/) for recommendations on how 
 
 ## [Unreleased]
 
+## [1.3.0] - 2026-10-06
+
+Ports the oemanagergui VS Code extension releases 1.14.0, 1.15.0 and 1.16.0.
+
+### Added
+- **Lifecycles view**: New sidebar entry showing agent (PID) and ABL session lifecycles derived from the agent log, in an expandable **Tree** mode or a **Packed lanes** mode. Includes drag/Ctrl+wheel zoom, error highlighting, tooltips and a **Min sessions** filter (default 4) that hides agents with fewer sessions.
+- **Lifecycles – Flame Chart**: Optional chart (hidden by default) of all HTTP requests of the selected day, colored by status and sharing its zoom with the lifecycle chart. Requests are only loaded while it is shown. A warning appears above the new *Flame Chart Warning Threshold* setting (default 20000, `0` disables).
+- **Lifecycles – Session Flame**: Optional chart with one bar per running session packed into lanes, colored by agent, with a red outline for sessions with errors.
+- **Lifecycles – click-through**: Clicking a bar opens the Logfiles view filtered by PID, ABL session or request ID.
+- **Logfiles – Session filter**: New Session filter (e.g. `AS-7`) that shows only agent log entries of that ABL session.
+- **Agent Metrics – auto-refresh**: Statistics refresh in place without redrawing the view. New *Agent Metrics* refresh setting (default 10s, `0` disables) plus Pause/Resume and Refresh Now buttons.
+- **Charts – optional legend**: A legend icon at the top right of the Session Memory / Requests Completed / Requests Failed Over Time charts shows the legend as a popover on hover; click to pin or unpin it. The legend is grouped by agent (ID, PID, state and metrics) and lists each session with its color, state, start time and current value. Click a session row to show or hide its line.
+
 ### Changed
+- **Agent Metrics – condensed view**: The expandable per-agent cards are replaced by a single summary table (one row per agent, color-coded statistics, per-agent Reset button) and combined Threads, Connections and Requests grids covering all agents. Request IDs open the Logfiles view. The SessionManager Metrics section is unchanged.
+- **Charts**: Each session keeps the same color across refreshes.
+- **Logfiles – charts removed**: The hidden PID Timeline and Flame Chart panels were removed from the Logfiles view; they now live in the Lifecycles view.
 - Logfiles now open at the tail and load older/newer complete-line chunks on demand instead of retaining the full file.
 - Log filters and request correlation now explicitly cover the bounded loaded window.
-- PID timeline and flame-chart panels are temporarily disabled pending a dedicated analytics view.
 
 ### Fixed
+- **Charts – legend growing forever**: Sessions that no longer exist are removed from the chart history and the legend once their data has left the 200-point time window.
+- **Metrics – missing status values**: The per-agent status (threads, sessions, connections, requests) is now actually fetched; the old cards always showed 0.
 - Bounded logfile reads prevent large agent and access logs from exhausting Tomcat or browser memory.
 
 ## [1.1.1] - 2026-01-28

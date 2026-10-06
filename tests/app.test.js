@@ -23,8 +23,20 @@ describe('OeManagerApp.prototype.loadStoredConfig', () => {
             chartsRefreshSec: 10,
             pasoeStatsRefreshSec: 30,
             logRefreshSec: 5,
+            metricsRefreshSec: 10,
+            flameChartWarnThreshold: 20000,
             pasoePathOverride: ''
         });
+    });
+
+    it('keeps 0 for metricsRefreshSec and flameChartWarnThreshold (feature disabled)', () => {
+        window.localStorage.setItem('oemanager.config', JSON.stringify({
+            metricsRefreshSec: 0,
+            flameChartWarnThreshold: 0
+        }));
+        const cfg = OeManagerApp.prototype.loadStoredConfig.call({});
+        expect(cfg.metricsRefreshSec).toBe(0);
+        expect(cfg.flameChartWarnThreshold).toBe(0);
     });
 
     it('hydrates fields from localStorage but never restores password', () => {
@@ -63,10 +75,11 @@ describe('OeManagerApp.prototype.saveConfig', () => {
                 password: 'secret-do-not-store',
                 waitToFinish: 100,
                 waitAfterStop: 200,
-                pasoePathOverride: '/p'
+                pasoePathOverride: '/p',
+                flameChartWarnThreshold: 500
             },
             refreshIntervals: {
-                agents: 1, requests: 2, charts: 3, pasoeStats: 4, logs: 5
+                agents: 1, requests: 2, charts: 3, pasoeStats: 4, logs: 5, metrics: 6
             }
         };
         OeManagerApp.prototype.saveConfig.call(ctx);
@@ -80,6 +93,8 @@ describe('OeManagerApp.prototype.saveConfig', () => {
             chartsRefreshSec: 3,
             pasoeStatsRefreshSec: 4,
             logRefreshSec: 5,
+            metricsRefreshSec: 6,
+            flameChartWarnThreshold: 500,
             pasoePathOverride: '/p'
         });
         expect(stored.password).toBeUndefined();

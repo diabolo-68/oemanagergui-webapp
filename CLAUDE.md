@@ -24,18 +24,24 @@ Browser (HTML/CSS/JS) → Direct API calls → PASOE oemanager REST API
 | `js/agentService.js` | REST API wrapper for PASOE oemanager |
 | `js/agentsView.js` | Agent/Session/Request management mixin |
 | `js/chartsView.js` | Performance charts mixin |
-| `js/metricsView.js` | Agent statistics mixin |
+| `js/metricsView.js` | Agent statistics mixin (summary table + combined grids) |
 | `js/pasoeStatsView.js` | PASOE time-series charts mixin |
+| `js/logFileService.js` | Log parsing, filtering, lifecycle aggregation |
+| `js/logfilesView.js` | Logfiles analyzer mixin (bounded windows) |
+| `js/lifecyclesView.js` | Lifecycles view mixin (streams logs in 2 MiB chunks) |
+| `js/laneCanvasChart.js` | Canvas lane (flame) chart used by Lifecycles |
 | `js/templates.js` | HTML template functions |
 | `js/utils.js` | Shared utility functions |
 
 ### Views
 
 1. **Agents View** - Agent/Session/Request management with context menus
-2. **Charts View** - Per-agent memory and request charts
-3. **Metrics View** - Agent statistics with expandable cards
+2. **Charts View** - Per-agent memory and request charts with optional legend popovers
+3. **Metrics View** - Condensed agent statistics table with auto-refresh
 4. **PASOE Stats View** - Session manager time-series charts
-5. **Settings View** - Configuration management
+5. **Logfiles View** - Bounded tail browsing of agent/access logs
+6. **Lifecycles View** - Agent/session lifecycles and flame charts
+7. **Settings View** - Configuration management
 
 ## Development Workflow
 

@@ -79,6 +79,10 @@
                         <span class="nav-icon">📋</span>
                         <span class="nav-label">Logfiles</span>
                     </li>
+                    <li class="nav-item" data-view="lifecycles">
+                        <span class="nav-icon">⏱️</span>
+                        <span class="nav-label">Lifecycles</span>
+                    </li>
                     <li class="nav-item" data-view="settings">
                         <span class="nav-icon">⚙️</span>
                         <span class="nav-label">Settings</span>
@@ -102,11 +106,14 @@
                         <button class="btn btn-warning" id="trimAllBtn" disabled>Trim All</button>
                     </div>
                     <div class="toolbar-right hidden" id="metricsToolbar">
+                        <span id="metricsSpinner" class="metrics-spinner" aria-hidden="true"></span>
+                        <span id="metricsRefreshStatus" class="metrics-refresh-status"></span>
                         <label class="checkbox-label">
                             <input type="checkbox" id="chkIncludeRequests" />
                             <span>Include Requests</span>
                         </label>
-                        <button class="btn btn-secondary" id="refreshMetricsBtn">Refresh</button>
+                        <button class="btn btn-secondary" id="refreshMetricsBtn">Refresh Now</button>
+                        <button class="btn btn-secondary" id="pauseMetricsBtn">Pause</button>
                         <button class="btn btn-warning" id="resetStatsBtn">Reset All Stats</button>
                     </div>
                 </div>
@@ -215,21 +222,39 @@
                     
                     <!-- Time Series Charts -->
                     <div class="chart-section">
-                        <h2>Session Memory Over Time</h2>
+                        <div class="chart-header">
+                            <h2>Session Memory Over Time</h2>
+                            <div class="legend-control" data-chart="memory">
+                                <button type="button" class="legend-toggle" data-chart="memory" title="Legend (hover to preview, click to pin)" aria-label="Toggle memory chart legend">&#9776;</button>
+                                <div class="legend-popover" data-chart="memory"><div class="legend-empty">No sessions</div></div>
+                            </div>
+                        </div>
                         <div class="chart-wrapper-large">
                             <canvas id="memoryTimeChart"></canvas>
                         </div>
                     </div>
                     
                     <div class="chart-section">
-                        <h2>Requests Completed Over Time</h2>
+                        <div class="chart-header">
+                            <h2>Requests Completed Over Time</h2>
+                            <div class="legend-control" data-chart="completed">
+                                <button type="button" class="legend-toggle" data-chart="completed" title="Legend (hover to preview, click to pin)" aria-label="Toggle requests completed chart legend">&#9776;</button>
+                                <div class="legend-popover" data-chart="completed"><div class="legend-empty">No sessions</div></div>
+                            </div>
+                        </div>
                         <div class="chart-wrapper-large">
                             <canvas id="requestsCompletedTimeChart"></canvas>
                         </div>
                     </div>
                     
                     <div class="chart-section">
-                        <h2>Requests Failed Over Time</h2>
+                        <div class="chart-header">
+                            <h2>Requests Failed Over Time</h2>
+                            <div class="legend-control" data-chart="failed">
+                                <button type="button" class="legend-toggle" data-chart="failed" title="Legend (hover to preview, click to pin)" aria-label="Toggle requests failed chart legend">&#9776;</button>
+                                <div class="legend-popover" data-chart="failed"><div class="legend-empty">No sessions</div></div>
+                            </div>
+                        </div>
                         <div class="chart-wrapper-large">
                             <canvas id="requestsFailedTimeChart"></canvas>
                         </div>
@@ -239,9 +264,56 @@
                 <!-- ==================== METRICS VIEW ==================== -->
                 <div id="metricsView" class="view hidden">
                     <div id="metricsContainer" class="metrics-container">
-                        <div class="placeholder">
-                            <p>Select an application to view metrics</p>
+                        <div id="metricsError" class="metrics-error hidden" role="alert"></div>
+                        <div class="session-manager-section">
+                            <div class="section-header" id="sessionManagerHeader">
+                                <span class="collapse-icon">▼</span>
+                                <span>SessionManager Metrics</span>
+                            </div>
+                            <div class="section-content expanded" id="sessionManagerContent"></div>
                         </div>
+                        <section class="metrics-section">
+                            <h3>Agents <span id="metricsSummaryCount" class="metrics-count"></span></h3>
+                            <div id="metricsSummaryWrapper" class="metrics-table-scroll">
+                                <table class="summary-table" id="metricsSummaryTable">
+                                    <thead id="metricsSummaryHead"></thead>
+                                    <tbody></tbody>
+                                </table>
+                            </div>
+                            <div id="metricsSummaryEmpty" class="no-data">Select an application to view metrics</div>
+                        </section>
+                        <div class="metrics-grids-row">
+                            <section class="metrics-section">
+                                <h3>Threads <span id="metricsThreadsCount" class="metrics-count"></span></h3>
+                                <div class="metrics-grid-container">
+                                    <table class="data-grid" id="metricsThreadsTable">
+                                        <thead><tr><th>Agent</th><th>Thread ID</th><th>State</th><th>Start Time</th><th>End Time</th></tr></thead>
+                                        <tbody></tbody>
+                                    </table>
+                                    <div id="metricsThreadsEmpty" class="no-data"></div>
+                                </div>
+                            </section>
+                            <section class="metrics-section">
+                                <h3>Connections <span id="metricsConnectionsCount" class="metrics-count"></span></h3>
+                                <div class="metrics-grid-container">
+                                    <table class="data-grid" id="metricsConnectionsTable">
+                                        <thead><tr><th>Agent</th><th>Connection ID</th><th>State</th><th>Session ID</th></tr></thead>
+                                        <tbody></tbody>
+                                    </table>
+                                    <div id="metricsConnectionsEmpty" class="no-data"></div>
+                                </div>
+                            </section>
+                        </div>
+                        <section class="metrics-section">
+                            <h3>Requests <span id="metricsRequestsCount" class="metrics-count"></span></h3>
+                            <div class="metrics-grid-container">
+                                <table class="data-grid" id="metricsRequestsTable">
+                                    <thead><tr><th>Agent</th><th>#</th><th>Procedure Name</th><th>Session</th><th>Connection</th><th>Start Time</th><th>Duration (ms)</th><th>Status</th><th>Request ID</th></tr></thead>
+                                    <tbody></tbody>
+                                </table>
+                                <div id="metricsRequestsEmpty" class="no-data"></div>
+                            </div>
+                        </section>
                     </div>
                 </div>
 
@@ -457,6 +529,10 @@
                                 <select id="logFilterPid"><option value="">All</option></select>
                             </div>
                             <div class="log-filter-group">
+                                <label>Session</label>
+                                <input type="text" id="logFilterSession" placeholder="e.g. AS-7" class="log-filter-input">
+                            </div>
+                            <div class="log-filter-group">
                                 <label>Type</label>
                                 <select id="logFilterLogType"><option value="">All</option></select>
                             </div>
@@ -514,48 +590,86 @@
                             </div>
                             <div class="log-correlation-entries" id="logCorrelationEntries"></div>
                         </div>
+                    </div>
+                </div>
 
-                        <!-- Resizer -->
-                        <div class="log-resizer hidden" id="logGanttResizer" style="display:none"></div>
-
-                        <!-- Bottom panel: Gantt + Flame Chart -->
-                        <div class="log-bottom-panel hidden" id="logBottomPanel" style="display:none">
-                            <div class="log-bottom-tabs">
-                                <button class="log-bottom-tab active" id="logTabGantt">PID Timeline</button>
-                                <button class="log-bottom-tab" id="logTabWaterfall">Flame Chart</button>
+                <!-- ==================== LIFECYCLES VIEW ==================== -->
+                <div id="lifecyclesView" class="view hidden">
+                    <div class="logfiles-container">
+                        <div class="log-toolbar">
+                            <div class="log-toolbar-left">
+                                <div class="log-file-group">
+                                    <label for="lcDate" class="log-file-label">Date</label>
+                                    <input type="date" id="lcDate" class="lc-input">
+                                </div>
+                                <button class="btn btn-primary btn-small" id="lcBtnRefresh">⟳ Refresh</button>
+                                <span id="lcLoadStatus" class="log-window-status"></span>
                             </div>
-
-                            <!-- Gantt section -->
-                            <div class="log-gantt-section" id="logGanttSection">
-                                <div id="logGanttEmpty" class="log-empty-state">No PID timeline data — upload an agent log file</div>
-                                <div id="logGanttChart" class="log-gantt-chart" style="display:none"></div>
-                                <div id="logGanttTooltip" class="log-gantt-tooltip" style="display:none"></div>
+                            <div class="log-toolbar-right">
+                                <span id="lcSummary" class="log-entry-count"></span>
                             </div>
+                        </div>
+                        <div id="lcError" class="lc-error hidden" role="alert"></div>
+                        <div class="lc-section">
+                            <div class="lc-spinner-overlay" id="lcSpinner" role="status" aria-label="Loading lifecycles"><div class="lc-spinner"></div></div>
+                            <div class="lc-controls">
+                                <span class="lc-title">Agent &amp; Session Lifecycles</span>
+                                <label class="lc-filter" for="lcMinSessions" title="Hide agents with fewer sessions than this">Min sessions:
+                                    <input type="number" id="lcMinSessions" class="lc-input" min="0" step="1" value="4">
+                                </label>
+                                <button class="btn btn-secondary btn-small" id="lcBtnMode" type="button" aria-pressed="false">Switch to Packed lanes</button>
+                                <button class="btn btn-secondary btn-small" id="lcBtnExpandAll" type="button">Expand all</button>
+                                <button class="btn btn-secondary btn-small" id="lcBtnCollapseAll" type="button">Collapse all</button>
+                                <button class="btn btn-secondary btn-small hidden" id="lcBtnResetZoom" type="button">Reset Zoom</button>
+                                <button class="btn btn-secondary btn-small" id="lcBtnFlameToggle" type="button" aria-pressed="false" title="Show the request flame chart below">Show Flame Chart</button>
+                                <button class="btn btn-secondary btn-small" id="lcBtnSessionFlameToggle" type="button" aria-pressed="false" title="Show the flame chart of running sessions below">Show Session Flame</button>
+                                <span class="lc-hint">Drag or Ctrl+wheel to zoom · click a bar to open in Logfiles</span>
+                            </div>
+                            <div class="lc-body" id="lcBody">
+                                <div class="lc-empty" id="lcEmpty">No agent log data loaded</div>
+                                <div id="lcChart" class="hidden">
+                                    <div class="lc-axis"><div class="lc-axis-spacer"></div><div class="lc-axis-area" id="lcAxisArea"></div></div>
+                                    <div id="lcRows"></div>
+                                </div>
+                            </div>
+                        </div>
 
-                            <!-- Flame chart section -->
-                            <div class="log-waterfall-section" id="logWaterfallSection" style="display:none">
+                        <div class="log-resizer hidden" id="lcResizer"></div>
+                        <div class="lc-flame-panel hidden" id="lcFlamePanel">
+                            <div class="log-waterfall-section lc-flame-section">
+                                <div class="lc-spinner-overlay" id="lcFlameSpinner" role="status" aria-label="Loading flame chart"><div class="lc-spinner"></div></div>
                                 <div class="log-waterfall-controls">
+                                    <span class="lc-title" title="Drag or Ctrl+wheel to zoom (shared with the lifecycle chart)">Flame Chart (requests)</span>
                                     <div class="log-waterfall-legend">
                                         <span class="log-legend-item"><span class="log-legend-swatch" style="background:rgba(137,209,133,0.85)"></span>2xx</span>
                                         <span class="log-legend-item"><span class="log-legend-swatch" style="background:rgba(55,148,255,0.85)"></span>3xx</span>
                                         <span class="log-legend-item"><span class="log-legend-swatch" style="background:rgba(204,167,0,0.85)"></span>4xx</span>
                                         <span class="log-legend-item"><span class="log-legend-swatch" style="background:rgba(241,76,76,0.85)"></span>5xx</span>
                                     </div>
-                                    <span id="logWaterfallInfo" class="log-waterfall-info"></span>
-                                    <div id="logWaterfallScrollControls" class="log-waterfall-paging" style="display:none">
-                                        <button class="btn btn-secondary btn-sm" id="logBtnWaterfallPrev">◀ Prev</button>
-                                        <span id="logWaterfallPageInfo"></span>
-                                        <button class="btn btn-secondary btn-sm" id="logBtnWaterfallNext">Next ▶</button>
-                                    </div>
-                                    <button class="btn btn-secondary btn-sm" id="logBtnWaterfallResetZoom" style="display:none">Reset Zoom</button>
+                                    <span class="lc-warning hidden" id="lcFlameWarning"></span>
+                                    <span class="log-waterfall-info" id="lcFlameInfo"></span>
                                 </div>
-                                <div id="logWaterfallEmpty" class="log-empty-state">No flame chart data — upload an access log file</div>
-                                <div id="logWaterfallContainer" class="log-waterfall-container" style="display:none">
-                                    <canvas id="logWaterfallCanvas"></canvas>
-                                </div>
-                                <div id="logFlameTooltip" class="log-flame-tooltip" style="display:none"></div>
+                                <div class="log-empty-state lc-empty-small" id="lcFlameEmpty">No access log entries loaded</div>
+                                <div class="log-waterfall-container hidden" id="lcFlameContainer"><canvas id="lcFlameCanvas"></canvas></div>
                             </div>
+                            <div class="log-flame-tooltip" id="lcFlameTooltip" style="display:none"></div>
                         </div>
+
+                        <div class="lc-flame-panel lc-session-flame-panel hidden" id="lcSfPanel">
+                            <div class="log-waterfall-section lc-flame-section">
+                                <div class="log-waterfall-controls">
+                                    <span class="lc-title" title="Drag or Ctrl+wheel to zoom (shared with the other charts)">Session Flame Chart (running sessions)</span>
+                                    <span class="log-waterfall-legend">Colored by agent · red outline = session with errors · click a bar to open in Logfiles</span>
+                                    <span class="log-waterfall-info" id="lcSfInfo"></span>
+                                </div>
+                                <div class="log-empty-state lc-empty-small hidden" id="lcSfEmpty">No sessions to display</div>
+                                <div class="log-waterfall-container" id="lcSfContainer"><canvas id="lcSfCanvas"></canvas></div>
+                            </div>
+                            <div class="log-flame-tooltip" id="lcSfTooltip" style="display:none"></div>
+                        </div>
+
+                        <div class="lc-selection" id="lcSelection" style="display:none"></div>
+                        <div class="lc-tooltip" id="lcTooltip" style="display:none"></div>
                     </div>
                 </div>
 
@@ -626,6 +740,22 @@
                                     <label for="logRefreshSec">Log Files</label>
                                     <input type="number" id="logRefreshSec" value="5" min="1" max="60">
                                     <small class="form-hint">Auto-refresh interval for log file auto-load</small>
+                                </div>
+                                <div class="form-group">
+                                    <label for="metricsRefreshSec">Agent Metrics</label>
+                                    <input type="number" id="metricsRefreshSec" value="10" min="0" max="300">
+                                    <small class="form-hint">Auto-refresh interval for agent metrics (0 disables)</small>
+                                </div>
+                            </div>
+                        </div>
+
+                        <div class="settings-section">
+                            <h3>Lifecycles</h3>
+                            <div class="settings-grid">
+                                <div class="form-group">
+                                    <label for="flameChartWarnThreshold">Flame Chart Warning Threshold</label>
+                                    <input type="number" id="flameChartWarnThreshold" value="20000" min="0" step="1000">
+                                    <small class="form-hint">Warn when a day has more requests than this (0 disables)</small>
                                 </div>
                             </div>
                         </div>
@@ -738,142 +868,6 @@
             <table><tbody></tbody></table>
         </div>
     </template>
-    
-    <!-- Threads Table Template -->
-    <template id="tmpl-threads-table">
-        <table class="data-grid">
-            <thead><tr>
-                <th>Thread ID</th>
-                <th>State</th>
-                <th>Start Time</th>
-                <th>End Time</th>
-            </tr></thead>
-            <tbody></tbody>
-        </table>
-    </template>
-    
-    <!-- Connections Table Template -->
-    <template id="tmpl-connections-table">
-        <table class="data-grid">
-            <thead><tr>
-                <th>Connection ID</th>
-                <th>State</th>
-                <th>Session ID</th>
-            </tr></thead>
-            <tbody></tbody>
-        </table>
-    </template>
-    
-    <!-- Metrics Requests Table Template -->
-    <template id="tmpl-metrics-requests-table">
-        <table class="data-grid metrics-requests-table">
-            <thead><tr>
-                <th>Request ID</th>
-                <th>Procedure Name</th>
-                <th>Session</th>
-                <th>Elapsed Time</th>
-                <th>Status</th>
-            </tr></thead>
-            <tbody></tbody>
-        </table>
-    </template>
-    
-    <!-- Agent Metrics Card Template -->
-    <template id="tmpl-agent-metrics-card">
-        <div class="agent-metric-card">
-            <div class="agent-metric-header">
-                <span class="collapse-icon">▼</span>
-                <span class="agent-id" data-field="agentId"></span>
-                <span class="agent-pid" data-field="pid"></span>
-                <span class="agent-state" data-field="state"></span>
-                <button class="btn btn-small btn-secondary reset-stats-btn">Reset Stats</button>
-            </div>
-            <div class="agent-metric-body expanded">
-                <h4>Status & Metrics Overview</h4>
-                <div class="metrics-overview-grid">
-                    <div class="metric-card">
-                        <div class="metric-label">Threads</div>
-                        <div class="metric-value" data-field="threads"></div>
-                    </div>
-                    <div class="metric-card">
-                        <div class="metric-label">Sessions</div>
-                        <div class="metric-value" data-field="sessions"></div>
-                    </div>
-                    <div class="metric-card">
-                        <div class="metric-label">Connections</div>
-                        <div class="metric-value" data-field="connections"></div>
-                    </div>
-                    <div class="metric-card">
-                        <div class="metric-label">Requests</div>
-                        <div class="metric-value" data-field="requests"></div>
-                    </div>
-                    <div class="metric-card">
-                        <div class="metric-label">CStack Memory</div>
-                        <div class="metric-value memory" data-field="cstackMemory"></div>
-                    </div>
-                    <div class="metric-card">
-                        <div class="metric-label">Overhead Memory</div>
-                        <div class="metric-value memory" data-field="overheadMemory"></div>
-                    </div>
-                    <div class="metric-card">
-                        <div class="metric-label">Active Threads</div>
-                        <div class="metric-value active" data-field="activeThreads"></div>
-                    </div>
-                    <div class="metric-card">
-                        <div class="metric-label">Active Sessions</div>
-                        <div class="metric-value active" data-field="activeSessions"></div>
-                    </div>
-                    <div class="metric-card">
-                        <div class="metric-label">Requests Completed</div>
-                        <div class="metric-value success" data-field="reqCompleted"></div>
-                    </div>
-                    <div class="metric-card">
-                        <div class="metric-label">Requests Failed</div>
-                        <div class="metric-value error" data-field="reqFailed"></div>
-                    </div>
-                    <div class="metric-card">
-                        <div class="metric-label">Requests Queued</div>
-                        <div class="metric-value" data-field="reqQueued"></div>
-                    </div>
-                </div>
-                
-                <h4>Duration Metrics</h4>
-                <div class="metrics-overview-grid">
-                    <div class="metric-card">
-                        <div class="metric-label">Total Request Duration</div>
-                        <div class="metric-value" data-field="totalReqDuration"></div>
-                    </div>
-                    <div class="metric-card">
-                        <div class="metric-label">Min Request Duration</div>
-                        <div class="metric-value" data-field="minReqDuration"></div>
-                    </div>
-                    <div class="metric-card">
-                        <div class="metric-label">Max Request Duration</div>
-                        <div class="metric-value" data-field="maxReqDuration"></div>
-                    </div>
-                    <div class="metric-card">
-                        <div class="metric-label">Avg Request Duration</div>
-                        <div class="metric-value" data-field="avgReqDuration"></div>
-                    </div>
-                </div>
-                
-                <div class="metrics-subsection">
-                    <h5>Threads</h5>
-                    <div data-section="threads"></div>
-                </div>
-                
-                <div class="metrics-subsection">
-                    <h5>Connections</h5>
-                    <div data-section="connections"></div>
-                </div>
-                
-                <div class="metrics-subsection hidden" data-section="requestsSection">
-                    <h5>Requests</h5>
-                    <div data-section="requests"></div>
-                </div>
-            </div>
-        </div>
-    </template>
 
     <!-- Scripts - Load order matters: utils → templates → mixins → agentService → app -->
     <script src="js/utils.js"></script>
@@ -885,6 +879,8 @@
     <script src="js/ablObjectsView.js"></script>
     <script src="js/logFileService.js"></script>
     <script src="js/logfilesView.js"></script>
+    <script src="js/laneCanvasChart.js"></script>
+    <script src="js/lifecyclesView.js"></script>
     <script src="js/agentService.js"></script>
     <script src="js/app.js"></script>
 </body>

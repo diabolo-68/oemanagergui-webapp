@@ -5,6 +5,16 @@
  * Methods are added to OeManagerApp.prototype
  */
 
+// Samples kept per session; also the width of the time-series chart window
+const CHART_WINDOW_POINTS = 200;
+
+// Time-series charts that have a legend popover (keyed by the legend id used in index.html)
+const CHART_LEGENDS = {
+    memory: { chartProp: 'memoryTimeChart', value: (s) => `${(s.memory || 0).toFixed(1)} MB` },
+    completed: { chartProp: 'requestsCompletedTimeChart', value: (s) => String(s.requestsCompleted || 0) },
+    failed: { chartProp: 'requestsFailedTimeChart', value: (s) => String(s.requestsFailed || 0) }
+};
+
 const ChartsViewMixin = {
     /**
      * Initialize Chart.js charts - creates empty chart instances
@@ -39,17 +49,42 @@ const ChartsViewMixin = {
      */
     async loadChartsData() {
         if (!this.selectedApplication) return;
+        this.ensureChartLegendState();
         
         try {
+            const applicationName = this.selectedApplication;
+
             // Fetch agents with their sessions (like VS Code extension)
-            const agentsWithSessions = await this.agentService.fetchAgentsWithSessions(this.selectedApplication);
+            const agentsWithSessions = await this.agentService.fetchAgentsWithSessions(applicationName);
+
+            // Per-agent metrics feed the legend; a failure keeps the last known metrics
+            const metricsResults = await Promise.allSettled(
+                agentsWithSessions.map(agent => this.agentService.fetchAgentMetrics(applicationName, agent.agentId))
+            );
+            if (applicationName !== this.selectedApplication) return;
             
             // Update per-session time-series data
             const currentTime = new Date();
-            agentsWithSessions.forEach(agent => {
+            this.chartRefreshTick++;
+            agentsWithSessions.forEach((agent, index) => {
+                const agentId = agent.agentId;
+                const previous = this.chartAgentInfo.get(agentId);
+                const result = metricsResults[index];
+                const metrics = result.status === 'fulfilled'
+                    ? (result.value?.result?.AgentStatHist?.[0] ?? {})
+                    : (previous?.metrics ?? {});
+                this.chartAgentInfo.set(agentId, {
+                    agentId,
+                    pid: agent.pid ?? agent.PID ?? '',
+                    state: agent.state ?? agent.State ?? '',
+                    metrics,
+                    lastSeenTick: this.chartRefreshTick
+                });
+
                 if (agent.sessions && Array.isArray(agent.sessions)) {
                     agent.sessions.forEach(session => {
-                        const sessionKey = `${agent.agentId}-${session.SessionId || session.sessionId}`;
+                        const sessionId = session.SessionId ?? session.sessionId;
+                        const sessionKey = `${agentId}-${sessionId}`;
                         const memory = (session.SessionMemory || session.sessionMemory || 0) / (1024 * 1024); // Convert to MB
                         const requestsCompleted = session.RequestsCompleted || session.requestsCompleted || 0;
                         const requestsFailed = session.RequestsFailed || session.requestsFailed || 0;
@@ -66,19 +101,232 @@ const ChartsViewMixin = {
                             requestsFailed: requestsFailed 
                         });
 
-                        // Keep only last 200 data points (like VS Code extension)
-                        if (history.length > 200) {
+                        // Keep only the last CHART_WINDOW_POINTS data points
+                        if (history.length > CHART_WINDOW_POINTS) {
                             history.shift();
                         }
+
+                        this.chartSessionInfo.set(sessionKey, {
+                            sessionKey,
+                            agentId,
+                            sessionId: String(sessionId ?? ''),
+                            state: session.SessionState ?? session.sessionState ?? '',
+                            startTime: session.StartTime ?? session.startTime ?? '',
+                            lastSeenTick: this.chartRefreshTick
+                        });
                     });
                 }
             });
+
+            this.pruneChartHistory();
 
             // Update all charts
             this.updateCharts(agentsWithSessions);
             
         } catch (error) {
             console.error('Error loading charts data:', error);
+        }
+    },
+
+    // ==================== LEGEND STATE ====================
+
+    /** Lazily create the legend caches (kept off the constructor so tests can use bare objects). */
+    ensureChartLegendState() {
+        if (this.chartSessionInfo) return;
+        this.chartAgentInfo = new Map();
+        this.chartSessionInfo = new Map();
+        this.chartSessionColors = new Map();
+        this.chartHiddenSessions = { memory: new Set(), completed: new Set(), failed: new Set() };
+        this.chartLegendPinned = { memory: false, completed: false, failed: false };
+        this.chartRefreshTick = 0;
+    },
+
+    /** Forget all history, e.g. after an application change or logout. */
+    clearChartHistory() {
+        this.chartHistoryData.clear();
+        this.ensureChartLegendState();
+        this.chartAgentInfo.clear();
+        this.chartSessionInfo.clear();
+        this.chartSessionColors.clear();
+        Object.values(this.chartHiddenSessions).forEach(set => set.clear());
+        this.chartRefreshTick = 0;
+        this.chartLegendInfo = { agents: [] };
+        this.renderChartLegends();
+    },
+
+    /**
+     * Drop sessions whose last sample has left the chart window, so terminated sessions
+     * disappear from the charts and the legend instead of accumulating forever.
+     */
+    pruneChartHistory() {
+        const minTick = this.chartRefreshTick - CHART_WINDOW_POINTS;
+        for (const [key, info] of this.chartSessionInfo) {
+            if (info.lastSeenTick <= minTick) {
+                this.chartSessionInfo.delete(key);
+                this.chartHistoryData.delete(key);
+            }
+        }
+        for (const key of this.chartHistoryData.keys()) {
+            if (!this.chartSessionInfo.has(key)) {
+                this.chartHistoryData.delete(key);
+            }
+        }
+        const agentsInUse = new Set(Array.from(this.chartSessionInfo.values()).map(s => s.agentId));
+        for (const [agentId, info] of this.chartAgentInfo) {
+            if (info.lastSeenTick <= minTick && !agentsInUse.has(agentId)) {
+                this.chartAgentInfo.delete(agentId);
+            }
+        }
+    },
+
+    /** Legend data grouped by agent: agent info and metrics plus each session's latest values. */
+    buildChartLegendInfo() {
+        const agents = new Map();
+        for (const [sessionKey, session] of this.chartSessionInfo) {
+            const history = this.chartHistoryData.get(sessionKey);
+            const last = history && history.length > 0 ? history[history.length - 1] : undefined;
+            let agent = agents.get(session.agentId);
+            if (!agent) {
+                const info = this.chartAgentInfo.get(session.agentId);
+                agent = {
+                    agentId: session.agentId,
+                    pid: info?.pid ?? '',
+                    state: info?.state ?? '',
+                    metrics: info?.metrics ?? {},
+                    sessions: []
+                };
+                agents.set(session.agentId, agent);
+            }
+            agent.sessions.push({
+                sessionKey,
+                sessionId: session.sessionId,
+                state: session.state,
+                startTime: session.startTime,
+                memory: last?.memory ?? 0,
+                requestsCompleted: last?.requestsCompleted ?? 0,
+                requestsFailed: last?.requestsFailed ?? 0
+            });
+        }
+        return { agents: Array.from(agents.values()) };
+    },
+
+    /** Keep a session's color across refreshes; free palette entries are reused first. */
+    assignChartSessionColors(keys) {
+        const palette = this.getChartColors();
+        const active = new Set(keys);
+        for (const key of Array.from(this.chartSessionColors.keys())) {
+            if (!active.has(key)) { this.chartSessionColors.delete(key); }
+        }
+        for (const key of keys) {
+            if (this.chartSessionColors.has(key)) continue;
+            const used = new Set(this.chartSessionColors.values());
+            const free = palette.find(color => !used.has(color));
+            this.chartSessionColors.set(key, free || palette[this.chartSessionColors.size % palette.length]);
+        }
+        for (const hidden of Object.values(this.chartHiddenSessions)) {
+            for (const key of Array.from(hidden)) {
+                if (!active.has(key)) { hidden.delete(key); }
+            }
+        }
+    },
+
+    // ==================== LEGEND RENDERING ====================
+
+    renderChartAgentMetrics(m) {
+        if (!m || Object.keys(m).length === 0) {
+            return '<div class="legend-muted">No metrics available</div>';
+        }
+        const rows = [
+            ['Memory', `CStack ${Utils.formatBytes(m.CStackMemory || 0)} / Overhead ${Utils.formatBytes(m.OverheadMemory || 0)}`],
+            ['Active', `${m.ActiveThreads || 0} threads, ${m.ActiveSessions || 0} sessions, ${m.OpenConnections || 0} connections`],
+            ['Exited', `${m.ExitedThreads || 0} threads, ${m.ExitedSessions || 0} sessions, ${m.ClosedConnections || 0} connections`],
+            ['Requests', `${m.RequestsCompleted || 0} completed, ${m.RequestsFailed || 0} failed, ${m.RequestsQueued || 0} queued`],
+            ['Duration', `avg ${Utils.formatDuration(m.AvgRequestDuration || 0)}, min ${Utils.formatDuration(m.MinRequestDuration || 0)}, max ${Utils.formatDuration(m.MaxRequestDuration || 0)}`]
+        ];
+        const cells = rows.map(([label, value]) =>
+            `<span class="legend-muted">${label}</span><span>${Utils.escapeHtml(value)}</span>`).join('');
+        return `<div class="legend-agent-metrics">${cells}</div>`;
+    },
+
+    renderChartLegend(legendId) {
+        const popover = document.querySelector(`.legend-popover[data-chart="${legendId}"]`);
+        if (!popover) return;
+        const esc = Utils.escapeHtml;
+        const agents = this.chartLegendInfo?.agents ?? [];
+        if (agents.length === 0) {
+            popover.innerHTML = '<div class="legend-empty">No sessions</div>';
+            return;
+        }
+
+        const hidden = this.chartHiddenSessions[legendId];
+        const valueOf = CHART_LEGENDS[legendId].value;
+        let html = '';
+        for (const agent of agents) {
+            html += '<div class="legend-agent">' +
+                '<div class="legend-agent-header">' +
+                `<span>Agent ${esc(String(agent.agentId))}</span>` +
+                `<span class="legend-muted">PID ${esc(String(agent.pid || '-'))}</span>` +
+                `<span class="legend-muted">${esc(String(agent.state || ''))}</span>` +
+                '</div>' +
+                this.renderChartAgentMetrics(agent.metrics);
+            for (const s of agent.sessions || []) {
+                const color = this.chartSessionColors.get(s.sessionKey) || 'rgba(201, 203, 207, 1)';
+                html += `<div class="legend-session${hidden.has(s.sessionKey) ? ' hidden-series' : ''}"` +
+                    ` data-session-key="${esc(s.sessionKey)}" title="Click to show/hide this session">` +
+                    `<span class="legend-swatch" style="background-color: ${esc(color)}"></span>` +
+                    `<span>S${esc(String(s.sessionId))}</span>` +
+                    `<span class="legend-muted">${esc(String(s.state || ''))}</span>` +
+                    `<span class="legend-muted">${esc(Utils.formatIsoDate(s.startTime))}</span>` +
+                    `<span class="legend-session-value">${esc(valueOf(s))}</span>` +
+                    '</div>';
+            }
+            html += '</div>';
+        }
+        const scrollTop = popover.scrollTop;
+        popover.innerHTML = html;
+        popover.scrollTop = scrollTop;
+    },
+
+    renderChartLegends() {
+        Object.keys(CHART_LEGENDS).forEach(id => this.renderChartLegend(id));
+    },
+
+    setChartLegendPinned(legendId, pinned) {
+        this.chartLegendPinned[legendId] = pinned;
+        document.querySelector(`.legend-control[data-chart="${legendId}"]`)?.classList.toggle('pinned', pinned);
+    },
+
+    toggleChartSeries(legendId, sessionKey) {
+        const hidden = this.chartHiddenSessions[legendId];
+        if (hidden.has(sessionKey)) { hidden.delete(sessionKey); } else { hidden.add(sessionKey); }
+
+        const chart = this[CHART_LEGENDS[legendId].chartProp];
+        if (chart) {
+            chart.data.datasets.forEach((dataset, index) => {
+                if (dataset.label === sessionKey) {
+                    dataset.hidden = hidden.has(sessionKey);
+                    const meta = chart.getDatasetMeta?.(index);
+                    if (meta) { meta.hidden = null; }
+                }
+            });
+            chart.update('none');
+        }
+        this.renderChartLegend(legendId);
+    },
+
+    /** Delegated clicks: legend icon pins the popover, a session row shows/hides its line. */
+    handleChartLegendClick(event) {
+        this.ensureChartLegendState();
+        const toggle = event.target.closest('.legend-toggle');
+        if (toggle) {
+            const legendId = toggle.dataset.chart;
+            this.setChartLegendPinned(legendId, !this.chartLegendPinned[legendId]);
+            return;
+        }
+        const row = event.target.closest('.legend-session');
+        if (row) {
+            const popover = row.closest('.legend-popover');
+            if (popover) { this.toggleChartSeries(popover.dataset.chart, row.dataset.sessionKey); }
         }
     },
 
@@ -95,12 +343,21 @@ const ChartsViewMixin = {
 
         if (historyData.length === 0) {
             // No history data yet - will populate on next refresh
+            this.ensureChartLegendState();
+            this.chartLegendInfo = this.buildChartLegendInfo();
+            this.chartSessionColors.clear();
+            this.renderChartLegends();
             return;
         }
 
+        this.ensureChartLegendState();
+        this.chartLegendInfo = this.buildChartLegendInfo();
+        this.assignChartSessionColors(historyData.map(h => h.sessionKey));
+        this.renderChartLegends();
+
         // Calculate time window
         const now = new Date();
-        const windowPoints = 200;
+        const windowPoints = CHART_WINDOW_POINTS;
         
         // Calculate average interval from actual data
         let intervalMs = this.refreshIntervals.charts * 1000; // Default to refresh interval
@@ -131,15 +388,7 @@ const ChartsViewMixin = {
             maintainAspectRatio: false,
             animation: false,
             plugins: {
-                legend: {
-                    display: true,
-                    position: 'top',
-                    labels: { 
-                        usePointStyle: true, 
-                        boxWidth: 6,
-                        color: '#cccccc'
-                    }
-                },
+                legend: { display: false },
                 tooltip: { mode: 'index', intersect: false }
             },
             interaction: { mode: 'nearest', axis: 'x', intersect: false },
@@ -221,8 +470,10 @@ const ChartsViewMixin = {
         const ctx = document.getElementById(canvasId);
         if (!ctx) return;
 
+        const legendId = Object.keys(CHART_LEGENDS).find(id => CHART_LEGENDS[id].chartProp === chartProp);
+
         const datasets = historyData.map((sessionHistory, index) => {
-            const color = colors[index % colors.length];
+            const color = this.chartSessionColors?.get(sessionHistory.sessionKey) ?? colors[index % colors.length];
             let data = sessionHistory.data.map(d => ({ x: new Date(d.time), y: dataExtractor(d) }));
             
             // Pad with null values if needed
@@ -244,7 +495,8 @@ const ChartsViewMixin = {
                 fill: false,
                 pointRadius: 0,
                 pointHitRadius: 5,
-                spanGaps: false
+                spanGaps: false,
+                hidden: Boolean(this.chartHiddenSessions?.[legendId]?.has(sessionHistory.sessionKey))
             };
         });
 

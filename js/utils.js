@@ -109,6 +109,85 @@ class Utils {
         return `${minutes}m ${seconds}s`;
     }
 
+    // ==================== Time-axis helpers (Lifecycles charts) ====================
+
+    /**
+     * Format seconds since midnight as HH:MM:SS.
+     */
+    static formatClockTime(seconds) {
+        if (seconds === null || seconds === undefined) return '??:??:??';
+        const pad = (n) => String(n).padStart(2, '0');
+        return `${pad(Math.floor(seconds / 3600))}:${pad(Math.floor((seconds % 3600) / 60))}:${pad(Math.floor(seconds % 60))}`;
+    }
+
+    /**
+     * Format a span in seconds as "1h 2m 3s".
+     */
+    static formatSpan(seconds) {
+        const total = Math.max(0, Math.round(seconds));
+        const h = Math.floor(total / 3600);
+        const m = Math.floor((total % 3600) / 60);
+        const s = total % 60;
+        if (h > 0) return `${h}h ${m}m ${s}s`;
+        if (m > 0) return `${m}m ${s}s`;
+        return `${s}s`;
+    }
+
+    /**
+     * Pick a "nice" tick interval (seconds) for a time axis.
+     */
+    static computeTickInterval(rangeSeconds, widthPx) {
+        const targetTicks = Math.max(3, Math.floor(widthPx / 100));
+        const rawInterval = rangeSeconds / targetTicks;
+        const nice = [1, 2, 5, 10, 15, 30, 60, 120, 300, 600, 900, 1800, 3600, 7200, 10800, 21600, 43200];
+        return nice.find(n => n >= rawInterval) ?? 86400;
+    }
+
+    /**
+     * Format an axis tick label; seconds are shown only for sub-minute intervals.
+     */
+    static formatTimeAxis(seconds, tickInterval) {
+        const full = Utils.formatClockTime(seconds);
+        return tickInterval < 60 ? full : full.substring(0, 5);
+    }
+
+    /**
+     * Zoom a time window around a ratio (0..1) of its width, clamped to one day.
+     * @returns {{xMin: number, xMax: number}}
+     */
+    static zoomRange(xMin, xMax, ratio, zoomOut) {
+        const day = 86400;
+        const range = xMax - xMin;
+        const anchor = xMin + ratio * range;
+        const newRange = Math.max(5, Math.min(day, range * (zoomOut ? 1.3 : 1 / 1.3)));
+        let newMin = anchor - newRange * ratio;
+        let newMax = newMin + newRange;
+        if (newMin < 0) { newMin = 0; newMax = newRange; }
+        if (newMax > day) { newMax = day; newMin = day - newRange; }
+        return { xMin: newMin, xMax: newMax };
+    }
+
+    /**
+     * Greedy lane packing: each item goes to the lowest lane whose last item ended before it starts.
+     * Items must expose startSec/endSec; the input is not mutated.
+     * @returns {{placed: Array<{item: Object, lane: number}>, laneCount: number}}
+     */
+    static packLanes(items) {
+        const sorted = [...items].sort((a, b) => a.startSec - b.startSec);
+        const laneEnds = [];
+        const placed = sorted.map(item => {
+            let lane = laneEnds.findIndex(end => item.startSec > end);
+            if (lane < 0) {
+                lane = laneEnds.length;
+                laneEnds.push(item.endSec);
+            } else {
+                laneEnds[lane] = item.endSec;
+            }
+            return { item, lane };
+        });
+        return { placed, laneCount: Math.max(laneEnds.length, 1) };
+    }
+
     /**
      * Truncate string to max length with ellipsis
      */

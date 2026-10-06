@@ -6,12 +6,10 @@
  * - Agent log + Access log file upload and parsing
  * - Virtual scrolling log table (PAGE_SIZE=200, ROW_HEIGHT=24)
  * - 9-column grid with source icon, timestamp, PID/IP, agent#, session, requestId, type, duration, message
- * - Filter bar with 9 criteria + 300ms debounce for text inputs
+ * - Filter bar with 10 criteria + 300ms debounce for text inputs
  * - Sort by timestamp or duration
  * - Correlation panel (click request ID to see all related entries)
- * - Gantt chart (PID timeline with colored bars)
- * - Flame chart (Canvas 2D with lane assignment, zoom, drag-to-zoom, click-to-correlate)
- * - Resizable bottom panel
+ * - Pre-filtered open from other views (openLogfilesWith)
  */
 const LOG_CHUNK_BYTES = 256 * 1024;
 const LOG_MAX_CHUNKS_PER_SOURCE = 3;
@@ -57,26 +55,6 @@ const LogfilesViewMixin = {
             agent: this.createLogSourceWindow('agent'),
             access: this.createLogSourceWindow('access')
         };
-
-        // Gantt data
-        this.logGanttData = [];
-
-        // Flame chart state
-        this.logWaterfallEntries = [];
-        this.logWaterfallCurrentPage = 0;
-        this.logWaterfallTotalCount = 0;
-        this.logFlameState = null;
-        this.logFlameHoverIdx = -1;
-        this.logFlameDragStartX = null;
-        this.logFlameDragCurrentX = null;
-        this.logFlameDragging = false;
-
-        // Bottom panel
-        this.logActiveBottomTab = 'gantt';
-        this.logBottomPanelHeight = 300;
-        this.logIsResizing = false;
-        this.logResizeStartY = 0;
-        this.logResizeStartHeight = 0;
 
         // Auto-load state
         this.logAutoRefreshTimer = null;
@@ -150,6 +128,7 @@ const LogfilesViewMixin = {
         };
         document.getElementById('logFilterMinResponseTime')?.addEventListener('input', debouncedFilter);
         document.getElementById('logFilterRequestId')?.addEventListener('input', debouncedFilter);
+        document.getElementById('logFilterSession')?.addEventListener('input', debouncedFilter);
         document.getElementById('logFilterSearch')?.addEventListener('input', debouncedFilter);
 
         // Source filter toggles access-only filter visibility
@@ -194,214 +173,6 @@ const LogfilesViewMixin = {
 
         // Row click delegation
         document.getElementById('logRows')?.addEventListener('click', (e) => self.handleLogRowClick(e));
-
-        // Bottom panel tabs
-        document.getElementById('logTabGantt')?.addEventListener('click', () => self.switchLogBottomTab('gantt'));
-        document.getElementById('logTabWaterfall')?.addEventListener('click', () => self.switchLogBottomTab('waterfall'));
-
-        // Bottom panel resizer
-        const resizer = document.getElementById('logGanttResizer');
-        resizer?.addEventListener('mousedown', (e) => {
-            e.preventDefault();
-            self.logIsResizing = true;
-            self.logResizeStartY = e.clientY;
-            self.logResizeStartHeight = document.getElementById('logBottomPanel').offsetHeight;
-            resizer.classList.add('dragging');
-            document.body.style.cursor = 'ns-resize';
-            document.body.style.userSelect = 'none';
-        });
-
-        document.addEventListener('mousemove', (e) => {
-            if (!self.logIsResizing) { return; }
-            const delta = self.logResizeStartY - e.clientY;
-            const newHeight = Math.max(80, Math.min(self.logResizeStartHeight + delta, window.innerHeight - 150));
-            document.getElementById('logBottomPanel').style.height = newHeight + 'px';
-        });
-
-        document.addEventListener('mouseup', () => {
-            if (self.logIsResizing) {
-                self.logIsResizing = false;
-                document.getElementById('logGanttResizer')?.classList.remove('dragging');
-                document.body.style.cursor = '';
-                document.body.style.userSelect = '';
-                self.logBottomPanelHeight = document.getElementById('logBottomPanel')?.offsetHeight ?? 300;
-                if (self.logActiveBottomTab === 'waterfall' && self.logFlameState) {
-                    self.drawLogFlameChart();
-                }
-            }
-        });
-
-        // Flame chart mouse interactions
-        const canvas = document.getElementById('logWaterfallCanvas');
-        canvas?.addEventListener('mousemove', (e) => {
-            if (self.logFlameDragging || !self.logFlameState) { return; }
-            const idx = self.logFlameHitTest(e.offsetX, e.offsetY);
-            if (idx !== self.logFlameHoverIdx) {
-                self.logFlameHoverIdx = idx;
-                self.drawLogFlameChart();
-            }
-            self.showLogFlameTooltip(idx, e.clientX, e.clientY);
-            canvas.style.cursor = idx >= 0 ? 'pointer' : 'crosshair';
-        });
-
-        canvas?.addEventListener('mouseleave', () => {
-            if (self.logFlameHoverIdx >= 0) {
-                self.logFlameHoverIdx = -1;
-                self.drawLogFlameChart();
-            }
-            document.getElementById('logFlameTooltip').style.display = 'none';
-        });
-
-        canvas?.addEventListener('mousedown', (e) => {
-            if (e.button !== 0 || !self.logFlameState) { return; }
-            self.logFlameDragStartX = e.offsetX;
-            self.logFlameDragCurrentX = e.offsetX;
-            self.logFlameDragging = true;
-            document.getElementById('logFlameTooltip').style.display = 'none';
-        });
-
-        document.addEventListener('mousemove', (e) => {
-            if (!self.logFlameDragging || !self.logFlameState) { return; }
-            const rect = canvas.getBoundingClientRect();
-            self.logFlameDragCurrentX = e.clientX - rect.left;
-            self.drawLogFlameChart();
-        });
-
-        document.addEventListener('mouseup', (e) => {
-            if (!self.logFlameDragging) { return; }
-            self.logFlameDragging = false;
-            if (!self.logFlameState) { self.logFlameDragStartX = null; self.logFlameDragCurrentX = null; return; }
-
-            const dx = Math.abs(self.logFlameDragCurrentX - self.logFlameDragStartX);
-            if (dx < 5) {
-                // Click — correlate
-                const rect = canvas.getBoundingClientRect();
-                const py = e.clientY - rect.top;
-                const idx = self.logFlameHitTest(self.logFlameDragStartX, py);
-                if (idx >= 0) {
-                    const entry = self.logFlameState.entries[idx];
-                    if (entry.requestId && entry.requestId !== '-') {
-                        self.logHighlightedRequestId = entry.requestId;
-                        self.showLogCorrelation(entry.requestId);
-                        self.renderLogRows();
-                    }
-                }
-            } else {
-                // Drag-to-zoom
-                const x1 = Math.min(self.logFlameDragStartX, self.logFlameDragCurrentX);
-                const x2 = Math.max(self.logFlameDragStartX, self.logFlameDragCurrentX);
-                const L = self.logFlameState.layout;
-                if (L) {
-                    const xRange = self.logFlameState.xMax - self.logFlameState.xMin;
-                    const newMin = self.logFlameState.xMin + (x1 / L.W) * xRange;
-                    const newMax = self.logFlameState.xMin + (x2 / L.W) * xRange;
-                    if (newMax - newMin >= 1) {
-                        self.logFlameState.xMin = newMin;
-                        self.logFlameState.xMax = newMax;
-                        document.getElementById('logBtnWaterfallResetZoom').style.display = '';
-                    }
-                }
-            }
-            self.logFlameDragStartX = null;
-            self.logFlameDragCurrentX = null;
-            self.drawLogFlameChart();
-        });
-
-        // Wheel zoom on flame chart
-        canvas?.addEventListener('wheel', (e) => {
-            e.preventDefault();
-            if (!self.logFlameState?.layout) { return; }
-
-            const mouseX = e.offsetX;
-            const L = self.logFlameState.layout;
-            const xRange = self.logFlameState.xMax - self.logFlameState.xMin;
-            const mouseTime = self.logFlameState.xMin + (mouseX / L.W) * xRange;
-            const zoomFactor = e.deltaY > 0 ? 1.3 : 1 / 1.3;
-            let newRange = xRange * zoomFactor;
-            newRange = Math.max(5, Math.min(86400, newRange));
-            const ratio = mouseX / L.W;
-            let newMin = mouseTime - newRange * ratio;
-            let newMax = newMin + newRange;
-            if (newMin < 0) { newMin = 0; newMax = Math.min(86400, newRange); }
-            if (newMax > 86400) { newMax = 86400; newMin = Math.max(0, 86400 - newRange); }
-            self.logFlameState.xMin = newMin;
-            self.logFlameState.xMax = newMax;
-            self.drawLogFlameChart();
-            if (Math.abs(self.logFlameState.xMin - self.logFlameState.xMinOrig) > 0.5 ||
-                Math.abs(self.logFlameState.xMax - self.logFlameState.xMaxOrig) > 0.5) {
-                document.getElementById('logBtnWaterfallResetZoom').style.display = '';
-            }
-        }, { passive: false });
-
-        // Waterfall paging
-        document.getElementById('logBtnWaterfallPrev')?.addEventListener('click', () => {
-            const newStart = Math.max(0, self.logWaterfallCurrentPage - 200);
-            self.renderLogWaterfall(self.logWaterfallEntries.slice(newStart, newStart + 200), newStart, self.logWaterfallTotalCount);
-        });
-        document.getElementById('logBtnWaterfallNext')?.addEventListener('click', () => {
-            const newStart = self.logWaterfallCurrentPage + 200;
-            if (newStart < self.logWaterfallTotalCount) {
-                self.renderLogWaterfall(self.logWaterfallEntries.slice(newStart, newStart + 200), newStart, self.logWaterfallTotalCount);
-            }
-        });
-
-        // Reset zoom
-        document.getElementById('logBtnWaterfallResetZoom')?.addEventListener('click', () => {
-            if (self.logFlameState) {
-                self.logFlameState.xMin = self.logFlameState.xMinOrig;
-                self.logFlameState.xMax = self.logFlameState.xMaxOrig;
-                document.getElementById('logBtnWaterfallResetZoom').style.display = 'none';
-                self.drawLogFlameChart();
-            }
-        });
-
-        // Gantt tooltip
-        document.addEventListener('mouseover', (e) => {
-            const bar = e.target.closest?.('.log-gantt-bar');
-            if (bar) {
-                const tip = document.getElementById('logGanttTooltip');
-                tip.innerHTML = `<strong>PID ${self.escapeLogHtml(bar.dataset.pid)}${self.escapeLogHtml(bar.dataset.agents || '')}</strong><br>` +
-                    `Start: ${self.escapeLogHtml(bar.dataset.start)}<br>End: ${self.escapeLogHtml(bar.dataset.end)}`;
-                tip.style.display = 'block';
-            }
-        });
-        document.addEventListener('mousemove', (e) => {
-            const tip = document.getElementById('logGanttTooltip');
-            if (tip?.style.display === 'block') {
-                tip.style.left = (e.clientX + 12) + 'px';
-                tip.style.top = (e.clientY - 10) + 'px';
-            }
-        });
-        document.addEventListener('mouseout', (e) => {
-            if (e.target.closest?.('.log-gantt-bar')) {
-                document.getElementById('logGanttTooltip').style.display = 'none';
-            }
-        });
-        // Click Gantt bar → filter by PID
-        document.addEventListener('click', (e) => {
-            const bar = e.target.closest?.('.log-gantt-bar');
-            if (bar?.dataset.pid) {
-                document.getElementById('logFilterPid').value = bar.dataset.pid;
-                self.sendLogFilters();
-            }
-        });
-
-        // Flame chart resize observer
-        const waterfallContainer = document.getElementById('logWaterfallContainer');
-        if (waterfallContainer) {
-            const resizeObserver = new ResizeObserver(() => {
-                if (self.logFlameState && self.logActiveBottomTab === 'waterfall') {
-                    self.drawLogFlameChart();
-                }
-            });
-            resizeObserver.observe(waterfallContainer);
-        }
-
-        // Set initial bottom panel height
-        const bottomPanel = document.getElementById('logBottomPanel');
-        if (bottomPanel) {
-            bottomPanel.style.height = this.logBottomPanelHeight + 'px';
-        }
 
         // Initialize access-only filter visibility
         this.updateLogAccessOnlyFilters();
@@ -718,9 +489,6 @@ const LogfilesViewMixin = {
         this.logCurrentStartIndex = 0;
         this.logSelectedRequestId = null;
         this.logHighlightedRequestId = null;
-        this.logGanttData = [];
-        this.logWaterfallEntries = [];
-        this.logFlameState = null;
         this.logKnownAgentNumbers = [];
         this.logKnownProcessIds = [];
         this.logKnownLogTypes = [];
@@ -771,6 +539,7 @@ const LogfilesViewMixin = {
             source: document.getElementById('logFilterSource')?.value === 'all' ? undefined : document.getElementById('logFilterSource')?.value,
             agentNumber: document.getElementById('logFilterAgent')?.value || undefined,
             processId: document.getElementById('logFilterPid')?.value || undefined,
+            agentSessionId: document.getElementById('logFilterSession')?.value.trim() || undefined,
             logEntryType: document.getElementById('logFilterLogType')?.value || undefined,
             clientIp: document.getElementById('logFilterClientIp')?.value || undefined,
             statusCode: statusVal ? parseInt(statusVal, 10) : undefined,
@@ -780,16 +549,13 @@ const LogfilesViewMixin = {
         };
 
         this.applyLogFiltersAndRender();
-
-        if (this.logActiveBottomTab === 'waterfall') {
-            this.computeLogWaterfallData();
-        }
     },
 
     clearLogFilters() {
         document.getElementById('logFilterSource').value = 'all';
         document.getElementById('logFilterAgent').value = '';
         document.getElementById('logFilterPid').value = '';
+        document.getElementById('logFilterSession').value = '';
         document.getElementById('logFilterLogType').value = '';
         document.getElementById('logFilterClientIp').value = '';
         document.getElementById('logFilterStatusCode').value = '';
@@ -803,10 +569,6 @@ const LogfilesViewMixin = {
         this.updateLogSortIndicator();
         this.logCurrentFilters = {};
         this.applyLogFiltersAndRender();
-
-        if (this.logActiveBottomTab === 'waterfall') {
-            this.computeLogWaterfallData();
-        }
     },
 
     updateLogAccessOnlyFilters() {
@@ -1149,441 +911,7 @@ const LogfilesViewMixin = {
         document.getElementById('logCorrelationPanel')?.classList.add('open');
     },
 
-    // ==================== GANTT CHART ====================
-
-    computeLogGanttData() {
-        const pidRanges = new Map();
-
-        for (const entry of this.logAllEntries) {
-            if (entry.source !== 'agent') { continue; }
-            const pid = entry.processId;
-            if (!pid) { continue; }
-            const sec = this.logFileService.timestampToSeconds(entry.timestamp);
-            if (sec === null) { continue; }
-
-            const existing = pidRanges.get(pid);
-            if (!existing) {
-                pidRanges.set(pid, { firstSeen: sec, lastSeen: sec, agentNumbers: new Set([entry.agentNumber]) });
-            } else {
-                existing.agentNumbers.add(entry.agentNumber);
-                if (sec < existing.firstSeen) { existing.firstSeen = sec; }
-                if (sec > existing.lastSeen) { existing.lastSeen = sec; }
-            }
-        }
-
-        this.logGanttData = Array.from(pidRanges.entries())
-            .map(([pid, range]) => ({
-                pid,
-                startSec: range.firstSeen,
-                endSec: range.lastSeen,
-                agentNumbers: [...range.agentNumbers].sort((a, b) => parseInt(a) - parseInt(b)),
-            }))
-            .sort((a, b) => parseInt(a.pid) - parseInt(b.pid));
-
-        this.renderLogGantt(this.logGanttData);
-    },
-
-    renderLogGantt(data) {
-        const ganttEmpty = document.getElementById('logGanttEmpty');
-        const ganttChart = document.getElementById('logGanttChart');
-        if (!ganttEmpty || !ganttChart) { return; }
-
-        if (!data || data.length === 0) {
-            ganttEmpty.style.display = 'block';
-            ganttChart.style.display = 'none';
-            return;
-        }
-        ganttEmpty.style.display = 'none';
-        ganttChart.style.display = 'block';
-
-        const TOTAL_SECONDS = 24 * 3600;
-        const GANTT_COLORS = [
-            '#3794ff', '#89d185', '#f14c4c', '#cca700', '#b180d7',
-            '#d18616', '#2aa198', '#6c71c4', '#cb4b16', '#268bd2',
-        ];
-        const esc = this.escapeLogHtml;
-
-        // Time axis
-        let axisHtml = '<div class="log-gantt-time-axis"><div class="log-gantt-time-axis-labels">';
-        for (let h = 0; h <= 24; h += 2) {
-            const pct = (h * 3600 / TOTAL_SECONDS * 100).toFixed(2);
-            axisHtml += `<span class="log-gantt-hour-label" style="left:${pct}%">${String(h).padStart(2, '0')}:00</span>`;
-        }
-        axisHtml += '</div></div>';
-
-        // Rows
-        let rowsHtml = '<div class="log-gantt-rows">';
-        data.forEach((item, idx) => {
-            const startSec = typeof item.startSec === 'number' ? item.startSec : 0;
-            const endSec = typeof item.endSec === 'number' ? item.endSec : startSec;
-            const leftPct = (startSec / TOTAL_SECONDS * 100).toFixed(3);
-            const widthPct = (Math.max(endSec - startSec, 1) / TOTAL_SECONDS * 100).toFixed(3);
-            const color = GANTT_COLORS[idx % GANTT_COLORS.length];
-            const agentLabel = item.agentNumbers?.length > 0
-                ? ` (Agt#${item.agentNumbers.join(',')})`
-                : '';
-
-            let gridLines = '';
-            for (let h = 0; h <= 24; h += 2) {
-                const gPct = (h * 3600 / TOTAL_SECONDS * 100).toFixed(2);
-                gridLines += `<div class="log-gantt-grid-line" style="left:${gPct}%"></div>`;
-            }
-
-            rowsHtml += `<div class="log-gantt-row">` +
-                `<div class="log-gantt-pid-label">PID ${esc(item.pid)}${esc(agentLabel)}</div>` +
-                `<div class="log-gantt-bar-area">` +
-                gridLines +
-                `<div class="log-gantt-bar" style="left:${leftPct}%;width:${widthPct}%;background:${color};"` +
-                ` data-pid="${esc(item.pid)}"` +
-                ` data-agents="${esc(agentLabel)}"` +
-                ` data-start="${this.formatLogTime(startSec)}"` +
-                ` data-end="${this.formatLogTime(endSec)}"` +
-                `></div></div></div>`;
-        });
-        rowsHtml += '</div>';
-
-        ganttChart.innerHTML = axisHtml + rowsHtml;
-    },
-
-    // ==================== FLAME CHART (CANVAS) ====================
-
-    computeLogWaterfallData() {
-        const entries = (this.logCurrentFilters && Object.keys(this.logCurrentFilters).length > 0)
-            ? this.logFilteredEntries
-            : this.logAllEntries;
-
-        this.logWaterfallEntries = [];
-
-        for (const entry of entries) {
-            if (entry.source !== 'access') { continue; }
-            const endSec = this.logFileService.timestampToSeconds(entry.timestamp);
-            if (endSec === null) { continue; }
-            // responseTime is in microseconds (Tomcat %D directive)
-            const durationSec = entry.responseTime / 1_000_000;
-            const startSec = Math.max(0, endSec - durationSec);
-
-            this.logWaterfallEntries.push({
-                startSec,
-                endSec,
-                method: entry.method,
-                url: entry.url,
-                statusCode: entry.statusCode,
-                responseTime: entry.responseTime,
-                clientIp: entry.clientIp,
-                requestId: entry.appRequestId,
-            });
-        }
-
-        this.logWaterfallEntries.sort((a, b) => a.startSec - b.startSec);
-        this.logWaterfallTotalCount = this.logWaterfallEntries.length;
-
-        const PAGE_SIZE = 200;
-        const page = this.logWaterfallEntries.slice(0, PAGE_SIZE);
-        this.renderLogWaterfall(page, 0, this.logWaterfallTotalCount);
-    },
-
-    renderLogWaterfall(entries, startIndex, totalCount) {
-        this.logWaterfallCurrentPage = startIndex;
-        this.logWaterfallTotalCount = totalCount;
-        this.logFlameHoverIdx = -1;
-        document.getElementById('logFlameTooltip').style.display = 'none';
-
-        const waterfallEmpty = document.getElementById('logWaterfallEmpty');
-        const waterfallContainer = document.getElementById('logWaterfallContainer');
-        const waterfallScrollControls = document.getElementById('logWaterfallScrollControls');
-        const waterfallInfo = document.getElementById('logWaterfallInfo');
-
-        if (!entries || entries.length === 0) {
-            if (waterfallEmpty) { waterfallEmpty.style.display = 'block'; }
-            if (waterfallContainer) { waterfallContainer.style.display = 'none'; }
-            if (waterfallScrollControls) { waterfallScrollControls.style.display = 'none'; }
-            if (waterfallInfo) { waterfallInfo.textContent = ''; }
-            this.logFlameState = null;
-            return;
-        }
-
-        if (waterfallEmpty) { waterfallEmpty.style.display = 'none'; }
-        if (waterfallContainer) { waterfallContainer.style.display = ''; }
-
-        const PAGE_SIZE = 200;
-        if (totalCount > PAGE_SIZE) {
-            if (waterfallScrollControls) { waterfallScrollControls.style.display = ''; }
-            const pageEnd = Math.min(startIndex + entries.length, totalCount);
-            const pageInfo = document.getElementById('logWaterfallPageInfo');
-            if (pageInfo) { pageInfo.textContent = `${startIndex + 1} - ${pageEnd} of ${totalCount}`; }
-            const prevBtn = document.getElementById('logBtnWaterfallPrev');
-            const nextBtn = document.getElementById('logBtnWaterfallNext');
-            if (prevBtn) { prevBtn.disabled = startIndex === 0; }
-            if (nextBtn) { nextBtn.disabled = pageEnd >= totalCount; }
-        } else {
-            if (waterfallScrollControls) { waterfallScrollControls.style.display = 'none'; }
-        }
-
-        if (waterfallInfo) { waterfallInfo.textContent = `${totalCount} requests`; }
-
-        // Compute data range
-        let dataMin = Infinity;
-        let dataMax = -Infinity;
-        for (const e of entries) {
-            if (e.startSec < dataMin) { dataMin = e.startSec; }
-            if (e.endSec > dataMax) { dataMax = e.endSec; }
-        }
-        if (!isFinite(dataMin)) { dataMin = 0; }
-        if (!isFinite(dataMax)) { dataMax = 86400; }
-        let dataRange = dataMax - dataMin;
-        if (dataRange < 10) { dataRange = 10; }
-        const padding = dataRange * 0.05;
-        const xMin = Math.max(0, dataMin - padding);
-        const xMax = Math.min(86400, dataMax + padding);
-
-        // Lane assignment (greedy bin-packing)
-        const laneEnds = [];
-        const entryLanes = new Array(entries.length);
-        for (let i = 0; i < entries.length; i++) {
-            const e = entries[i];
-            let placed = false;
-            for (let l = 0; l < laneEnds.length; l++) {
-                if (e.startSec >= laneEnds[l]) {
-                    entryLanes[i] = l;
-                    laneEnds[l] = e.endSec;
-                    placed = true;
-                    break;
-                }
-            }
-            if (!placed) {
-                entryLanes[i] = laneEnds.length;
-                laneEnds.push(e.endSec);
-            }
-        }
-        const numLanes = Math.max(laneEnds.length, 1);
-
-        this.logFlameState = {
-            entries,
-            entryLanes,
-            numLanes,
-            xMin,
-            xMax,
-            xMinOrig: xMin,
-            xMaxOrig: xMax,
-            startIndex,
-            layout: null,
-        };
-
-        document.getElementById('logBtnWaterfallResetZoom').style.display = 'none';
-        this.drawLogFlameChart();
-    },
-
-    drawLogFlameChart() {
-        if (!this.logFlameState) { return; }
-        const s = this.logFlameState;
-        const canvas = document.getElementById('logWaterfallCanvas');
-        if (!canvas) { return; }
-        const ctx = canvas.getContext('2d');
-        const dpr = window.devicePixelRatio || 1;
-        const containerRect = document.getElementById('logWaterfallContainer').getBoundingClientRect();
-        const W = containerRect.width;
-
-        const AXIS_H = 24;
-        const BAR_H = 14;
-        const BAR_GAP = 2;
-        const LANE_H = BAR_H + BAR_GAP;
-        const CHART_TOP = AXIS_H;
-        const contentHeight = CHART_TOP + s.numLanes * LANE_H + 4;
-        const H = Math.max(contentHeight, containerRect.height);
-
-        canvas.width = Math.round(W * dpr);
-        canvas.height = Math.round(H * dpr);
-        canvas.style.width = W + 'px';
-        canvas.style.height = H + 'px';
-        ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
-
-        s.layout = { W, H, AXIS_H, BAR_H, LANE_H, CHART_TOP };
-
-        const xMin = s.xMin;
-        const xMax = s.xMax;
-        const xRange = xMax - xMin;
-        const timeToX = (sec) => (sec - xMin) / xRange * W;
-
-        // Colors
-        const cs = getComputedStyle(document.body);
-        const textColor = cs.getPropertyValue('--text-primary')?.trim() || '#cccccc';
-        const gridColor = cs.getPropertyValue('--border-color')?.trim() || '#3c3c3c';
-        const bgColor = cs.getPropertyValue('--bg-primary')?.trim() || '#1e1e1e';
-
-        ctx.clearRect(0, 0, W, H);
-
-        // Axis background
-        ctx.fillStyle = bgColor;
-        ctx.fillRect(0, 0, W, AXIS_H);
-
-        // Grid lines + labels
-        const tickInterval = this.computeLogTickInterval(xRange, W);
-        const firstTick = Math.ceil(xMin / tickInterval) * tickInterval;
-        ctx.font = '10px Consolas, Monaco, monospace';
-        ctx.textAlign = 'center';
-        ctx.textBaseline = 'bottom';
-        for (let t = firstTick; t <= xMax; t += tickInterval) {
-            const tx = timeToX(t);
-            ctx.strokeStyle = gridColor;
-            ctx.lineWidth = 0.5;
-            ctx.beginPath();
-            ctx.moveTo(tx, AXIS_H);
-            ctx.lineTo(tx, H);
-            ctx.stroke();
-            ctx.fillStyle = textColor;
-            ctx.fillText(this.formatLogTimeAxis(t, tickInterval), tx, AXIS_H - 4);
-        }
-
-        // Axis bottom line
-        ctx.strokeStyle = gridColor;
-        ctx.lineWidth = 1;
-        ctx.beginPath();
-        ctx.moveTo(0, AXIS_H);
-        ctx.lineTo(W, AXIS_H);
-        ctx.stroke();
-
-        // Draw bars
-        for (let i = 0; i < s.entries.length; i++) {
-            const e = s.entries[i];
-            const lane = s.entryLanes[i];
-            const x1 = timeToX(e.startSec);
-            const x2 = timeToX(e.endSec);
-            const barW = Math.max(x2 - x1, 2);
-            const y = CHART_TOP + lane * LANE_H;
-
-            if (y + BAR_H < 0 || y > H) { continue; }
-            if (x1 + barW < 0 || x1 > W) { continue; }
-
-            ctx.fillStyle = this.logStatusColor(e.statusCode);
-            ctx.fillRect(x1, y, barW, BAR_H);
-
-            if (i === this.logFlameHoverIdx) {
-                ctx.strokeStyle = '#ffffff';
-                ctx.lineWidth = 1.5;
-                ctx.strokeRect(x1 - 0.5, y - 0.5, barW + 1, BAR_H + 1);
-            }
-        }
-
-        // Drag selection overlay
-        if (this.logFlameDragging && this.logFlameDragStartX !== null && this.logFlameDragCurrentX !== null) {
-            const dx1 = Math.min(this.logFlameDragStartX, this.logFlameDragCurrentX);
-            const dx2 = Math.max(this.logFlameDragStartX, this.logFlameDragCurrentX);
-            ctx.fillStyle = 'rgba(55, 148, 255, 0.15)';
-            ctx.fillRect(dx1, AXIS_H, dx2 - dx1, H - AXIS_H);
-            ctx.strokeStyle = 'rgba(55, 148, 255, 0.5)';
-            ctx.lineWidth = 1;
-            ctx.strokeRect(dx1, AXIS_H, dx2 - dx1, H - AXIS_H);
-        }
-    },
-
-    logFlameHitTest(px, py) {
-        if (!this.logFlameState?.layout) { return -1; }
-        const s = this.logFlameState;
-        const L = s.layout;
-        if (py < L.CHART_TOP) { return -1; }
-        const xRange = s.xMax - s.xMin;
-        const timeToX = (sec) => (sec - s.xMin) / xRange * L.W;
-
-        for (let i = 0; i < s.entries.length; i++) {
-            const e = s.entries[i];
-            const lane = s.entryLanes[i];
-            const x1 = timeToX(e.startSec);
-            const x2 = timeToX(e.endSec);
-            const barW = Math.max(x2 - x1, 2);
-            const y = L.CHART_TOP + lane * L.LANE_H;
-            if (px >= x1 && px <= x1 + barW && py >= y && py <= y + L.BAR_H) {
-                return i;
-            }
-        }
-        return -1;
-    },
-
-    showLogFlameTooltip(idx, clientX, clientY) {
-        const tooltip = document.getElementById('logFlameTooltip');
-        if (idx < 0 || !this.logFlameState) {
-            tooltip.style.display = 'none';
-            return;
-        }
-        const e = this.logFlameState.entries[idx];
-        const dur = e.responseTime / 1000;
-        tooltip.innerHTML =
-            `<b>${this.escapeLogHtml(e.method)} ${this.escapeLogHtml(e.url || '')}</b><br>` +
-            `Status: ${e.statusCode} &nbsp; Duration: ${dur.toFixed(1)}ms<br>` +
-            `Start: ${this.formatLogTime(e.startSec)} &nbsp; End: ${this.formatLogTime(e.endSec)}<br>` +
-            `Client: ${this.escapeLogHtml(e.clientIp)}`;
-        tooltip.style.display = '';
-
-        const tt = tooltip.getBoundingClientRect();
-        const vw = window.innerWidth;
-        const vh = window.innerHeight;
-        let left = clientX + 12;
-        let top = clientY + 12;
-        if (left + tt.width > vw - 8) { left = clientX - tt.width - 12; }
-        if (top + tt.height > vh - 8) { top = clientY - tt.height - 12; }
-        tooltip.style.left = left + 'px';
-        tooltip.style.top = top + 'px';
-    },
-
-    // ==================== BOTTOM PANEL TABS ====================
-
-    switchLogBottomTab(tab) {
-        this.logActiveBottomTab = tab;
-        const tabGantt = document.getElementById('logTabGantt');
-        const tabWaterfall = document.getElementById('logTabWaterfall');
-        const ganttSection = document.getElementById('logGanttSection');
-        const waterfallSection = document.getElementById('logWaterfallSection');
-
-        if (tab === 'gantt') {
-            tabGantt?.classList.add('active');
-            tabWaterfall?.classList.remove('active');
-            if (ganttSection) { ganttSection.style.display = ''; }
-            if (waterfallSection) { waterfallSection.style.display = 'none'; }
-        } else {
-            tabWaterfall?.classList.add('active');
-            tabGantt?.classList.remove('active');
-            if (ganttSection) { ganttSection.style.display = 'none'; }
-            if (waterfallSection) { waterfallSection.style.display = ''; }
-            this.computeLogWaterfallData();
-        }
-    },
-
     // ==================== UTILITY FUNCTIONS ====================
-
-    logStatusColor(code) {
-        if (code >= 200 && code < 300) { return 'rgba(137, 209, 133, 0.85)'; }
-        if (code >= 300 && code < 400) { return 'rgba(55, 148, 255, 0.85)'; }
-        if (code >= 400 && code < 500) { return 'rgba(204, 167, 0, 0.85)'; }
-        if (code >= 500) { return 'rgba(241, 76, 76, 0.85)'; }
-        return 'rgba(177, 128, 215, 0.85)';
-    },
-
-    computeLogTickInterval(rangeSeconds, widthPx) {
-        const targetTicks = Math.max(3, Math.floor(widthPx / 100));
-        const rawInterval = rangeSeconds / targetTicks;
-        const nice = [1, 2, 5, 10, 15, 30, 60, 120, 300, 600, 900, 1800, 3600, 7200, 10800, 21600, 43200];
-        for (const n of nice) {
-            if (n >= rawInterval) { return n; }
-        }
-        return 86400;
-    },
-
-    formatLogTime(seconds) {
-        if (seconds == null) { return '??:??:??'; }
-        const h = Math.floor(seconds / 3600);
-        const m = Math.floor((seconds % 3600) / 60);
-        const s = Math.floor(seconds % 60);
-        return `${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}:${String(s).padStart(2, '0')}`;
-    },
-
-    formatLogTimeAxis(seconds, tickInterval) {
-        const h = Math.floor(seconds / 3600);
-        const m = Math.floor((seconds % 3600) / 60);
-        const s = Math.floor(seconds % 60);
-        if (tickInterval < 60) {
-            return `${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}:${String(s).padStart(2, '0')}`;
-        }
-        return `${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}`;
-    },
 
     escapeLogHtml(text) {
         if (!text) { return ''; }
@@ -1650,6 +978,95 @@ const LogfilesViewMixin = {
     // ==================== AUTO-LOAD FROM PASOE SERVER ====================
 
     /**
+     * Resolve the agent and access log locations for the selected application and date.
+     * Reads openedge.properties and resolves date tokens. Shared with the Lifecycles view.
+     * @param {string} date - YYYY-MM-DD
+     * @returns {Promise<Object>} Relative paths, display names, PASOE path option and date-token flag
+     * @throws {Error} With a user-presentable message when paths cannot be resolved
+     */
+    async resolveLogSources(date) {
+        const pasoePath = this.getEffectivePasoePath();
+        if (!pasoePath) {
+            throw new Error('PASOE path not available. Check Settings → PASOE Instance.');
+        }
+        if (!this.selectedApplication) {
+            throw new Error('Please select an application first (login and connect).');
+        }
+
+        const pasoePathOption = this.getPasoePathOption();
+        const propsResult = await this.agentService.readServerFile('conf/openedge.properties', {
+            pasoePathOverride: pasoePathOption
+        });
+        const logPaths = this.logFileService.parsePropertiesContent(propsResult.content, pasoePath);
+        const agentLogTemplate = logPaths.get(this.selectedApplication);
+        if (!agentLogTemplate) {
+            throw new Error(`No agentLogFile found for application "${this.selectedApplication}" in openedge.properties`);
+        }
+
+        const agentLogPath = this.logFileService.resolveAgentLogPath(agentLogTemplate, date);
+        const logDir = this.logFileService.getLogDirectory(agentLogPath);
+        const accessLogPath = `${logDir}/localhost-access.${date}.log`;
+
+        return {
+            agentLogRelPath: this.logFileService.toRelativePath(agentLogPath, pasoePath),
+            accessLogRelPath: this.logFileService.toRelativePath(accessLogPath, pasoePath),
+            agentLogFileName: agentLogPath.split(/[\\/]/).pop(),
+            accessLogFileName: accessLogPath.split(/[\\/]/).pop(),
+            pasoePath: pasoePathOption,
+            hasDateToken: this.logFileService.hasDateToken(agentLogTemplate)
+        };
+    },
+
+    /**
+     * Open the Logfiles view for an application/date and apply filters from another view.
+     * Filters only cover the bounded loaded window; older entries need "Older".
+     * @param {{applicationName?: string, date?: string, processId?: string, agentSessionId?: string, requestId?: string}} preset
+     */
+    async openLogfilesWith(preset = {}) {
+        this.initLogfilesState();
+        const { applicationName, date, processId, agentSessionId, requestId } = preset;
+
+        if (applicationName && applicationName !== this.selectedApplication) {
+            const select = document.getElementById('applicationSelect');
+            if (select) { select.value = applicationName; }
+            this.selectApplication(applicationName);
+        }
+
+        // Prevents loadLogfilesView from starting a second, unfiltered load
+        this._logfilesAutoLoadAttempted = true;
+        this.switchView('logfiles');
+
+        const dateInput = document.getElementById('logAutoDate');
+        if (dateInput && date) { dateInput.value = date; }
+
+        await this.autoLoadLogs();
+
+        this.clearLogFilters();
+        this.setLogFilterValue('logFilterPid', processId);
+        this.setLogFilterValue('logFilterSession', agentSessionId);
+        this.setLogFilterValue('logFilterRequestId', requestId);
+        this.sendLogFilters();
+
+        const statusEl = document.getElementById('logAutoStatus');
+        if (statusEl && (processId || agentSessionId || requestId)) {
+            statusEl.textContent = 'Filters cover the loaded window only — use ◀ Older to load earlier entries';
+        }
+    },
+
+    /** Set a filter control; a select gets the option added when the loaded window lacks that value. */
+    setLogFilterValue(controlId, value) {
+        const control = document.getElementById(controlId);
+        if (!control || !value) { return; }
+        if (control.tagName === 'SELECT' && !Array.from(control.options).some(o => o.value === value)) {
+            const option = document.createElement('option');
+            option.value = value;
+            option.textContent = value;
+            control.appendChild(option);
+        }
+        control.value = value;
+    },
+
+    /**
      * Auto-load logs from the PASOE server.
      * Reads openedge.properties → resolves log paths → reads log files → parses → displays.
      */
@@ -1664,49 +1081,13 @@ const LogfilesViewMixin = {
             return;
         }
 
-        const pasoePath = this.getEffectivePasoePath();
-        if (!pasoePath) {
-            Utils.showToast('PASOE path not available. Check Settings → PASOE Instance.', 'error');
-            return;
-        }
-
-        if (!this.selectedApplication) {
-            Utils.showToast('Please select an application first (login and connect).', 'error');
-            return;
-        }
-
         if (statusEl) { statusEl.textContent = 'Reading properties...'; }
 
         try {
-            const pasoePathOption = this.getPasoePathOption();
-
-            // 1. Read openedge.properties
-            const propsResult = await this.agentService.readServerFile('conf/openedge.properties', {
-                pasoePathOverride: pasoePathOption
-            });
-
-            // 2. Parse properties to find agent log path for the selected application
-            const logPaths = this.logFileService.parsePropertiesContent(propsResult.content, pasoePath);
-            const agentLogTemplate = logPaths.get(this.selectedApplication);
-
-            if (!agentLogTemplate) {
-                Utils.showToast(`No agentLogFile found for application "${this.selectedApplication}" in openedge.properties`, 'error');
-                if (statusEl) { statusEl.textContent = 'No log path found'; }
-                return;
-            }
-
-            // 3. Resolve date tokens → get actual log file path
-            const agentLogPath = this.logFileService.resolveAgentLogPath(agentLogTemplate, date);
-            const logDir = this.logFileService.getLogDirectory(agentLogPath);
-            const accessLogPath = logDir + '/localhost-access.' + date + '.log';
-
-            // Convert to relative paths for the servlet
-            const agentLogRelPath = this.logFileService.toRelativePath(agentLogPath, pasoePath);
-            const accessLogRelPath = this.logFileService.toRelativePath(accessLogPath, pasoePath);
-
-            // Extract filenames for display
-            const agentLogFileName = agentLogPath.split(/[\\/]/).pop();
-            const accessLogFileName = accessLogPath.split(/[\\/]/).pop();
+            const sources = await this.resolveLogSources(date);
+            const {
+                agentLogRelPath, accessLogRelPath, agentLogFileName, accessLogFileName, pasoePath: pasoePathOption
+            } = sources;
 
             // Store config for incremental refresh
             this.logAutoLoadConfig = {
@@ -1717,7 +1098,7 @@ const LogfilesViewMixin = {
                 pasoePath: pasoePathOption
             };
 
-            // 4. Clear existing data for a fresh bounded tail window
+            // Clear existing data for a fresh bounded tail window
             this.logAllEntries = [];
             this.logFilteredEntries = [];
             this.logSourceWindows = {
@@ -1743,7 +1124,7 @@ const LogfilesViewMixin = {
 
             if (statusEl) { statusEl.textContent = 'Loading logs...'; }
 
-            // 5. Load only the newest chunk from both logs
+            // Load only the newest chunk from both logs
             await this.autoLoadIncremental();
 
             if (statusEl) { statusEl.textContent = `Tail loaded (${this.logAllEntries.length} entries in window)`; }

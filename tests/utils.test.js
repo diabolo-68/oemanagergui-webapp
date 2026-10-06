@@ -126,6 +126,64 @@ describe('Utils.truncate', () => {
     });
 });
 
+describe('Utils time-axis helpers', () => {
+    it('formatClockTime pads HH:MM:SS and handles null', () => {
+        expect(Utils.formatClockTime(3723)).toBe('01:02:03');
+        expect(Utils.formatClockTime(null)).toBe('??:??:??');
+    });
+
+    it('formatSpan renders hours, minutes and seconds', () => {
+        expect(Utils.formatSpan(45)).toBe('45s');
+        expect(Utils.formatSpan(125)).toBe('2m 5s');
+        expect(Utils.formatSpan(3725)).toBe('1h 2m 5s');
+        expect(Utils.formatSpan(-5)).toBe('0s');
+    });
+
+    it('computeTickInterval picks the first nice interval that fits', () => {
+        // 600 px => 6 target ticks; 3600 s / 6 = 600 s
+        expect(Utils.computeTickInterval(3600, 600)).toBe(600);
+        expect(Utils.computeTickInterval(86400 * 10, 600)).toBe(86400);
+    });
+
+    it('formatTimeAxis shows seconds only below one-minute intervals', () => {
+        expect(Utils.formatTimeAxis(3723, 30)).toBe('01:02:03');
+        expect(Utils.formatTimeAxis(3723, 60)).toBe('01:02');
+    });
+
+    it('zoomRange narrows around the anchor and stays inside the day', () => {
+        const zoomedIn = Utils.zoomRange(0, 1000, 0.5, false);
+        expect(zoomedIn.xMax - zoomedIn.xMin).toBeCloseTo(1000 / 1.3);
+        expect((zoomedIn.xMin + zoomedIn.xMax) / 2).toBeCloseTo(500);
+
+        const clamped = Utils.zoomRange(0, 86400, 0.5, true);
+        expect(clamped).toEqual({ xMin: 0, xMax: 86400 });
+    });
+
+    it('zoomRange never goes below 5 seconds', () => {
+        const out = Utils.zoomRange(100, 106, 0.5, false);
+        expect(out.xMax - out.xMin).toBeCloseTo(5);
+    });
+
+    it('packLanes reuses a lane once the previous item has ended', () => {
+        const items = [
+            { id: 'a', startSec: 0, endSec: 10 },
+            { id: 'b', startSec: 5, endSec: 8 },
+            { id: 'c', startSec: 11, endSec: 12 }
+        ];
+        const { placed, laneCount } = Utils.packLanes(items);
+        const lanes = Object.fromEntries(placed.map(p => [p.item.id, p.lane]));
+        expect(lanes).toEqual({ a: 0, b: 1, c: 0 });
+        expect(laneCount).toBe(2);
+    });
+
+    it('packLanes returns one lane for empty input and does not mutate it', () => {
+        expect(Utils.packLanes([])).toEqual({ placed: [], laneCount: 1 });
+        const items = [{ startSec: 5, endSec: 6 }, { startSec: 1, endSec: 2 }];
+        Utils.packLanes(items);
+        expect(items[0].startSec).toBe(5);
+    });
+});
+
 describe('Utils.escapeHtml', () => {
     it('escapes all five special characters', () => {
         expect(Utils.escapeHtml(`<a href="x" name='y'>&</a>`))
