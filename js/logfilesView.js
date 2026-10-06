@@ -13,6 +13,10 @@
  */
 const LOG_CHUNK_BYTES = 256 * 1024;
 const LOG_MAX_CHUNKS_PER_SOURCE = 3;
+// Text filters only trigger a full-log scan from this length on, to avoid streaming whole logs per keystroke
+const LOG_SCAN_MIN_CHARS = 3;
+const LOG_SCAN_CHUNK_BYTES = 2 * 1024 * 1024;
+const LOG_SCAN_MAX_MATCHES = 5000;
 
 const LogfilesViewMixin = {
 
@@ -34,6 +38,11 @@ const LogfilesViewMixin = {
         this.logCurrentFilters = {};
         this.logSortField = 'timestamp';
         this.logSortDirection = 'asc';
+
+        // Matches found by scanning the whole log, beyond the loaded window
+        this.logScanEntries = [];
+        this.logScanToken = 0;
+        this.logScanStatus = '';
 
         // Filter metadata
         this.logKnownAgentNumbers = [];
@@ -220,6 +229,8 @@ const LogfilesViewMixin = {
             this.logFollowTail = true;
             this.updateLogFollowTailButton();
             this.rebuildLogWindow(null, true);
+            this.cancelLogFilterScan();
+            this.startLogFilterScan();
         } catch (error) {
             console.error(`[Logfiles] Failed to read ${file.name}:`, error);
             if (statusEl) { statusEl.textContent = `Error reading ${file.name}`; }
@@ -369,7 +380,7 @@ const LogfilesViewMixin = {
         this.logAllEntries = this.logFileService.mergeEntries(agentEntries, accessEntries);
         this.logCorrelationIndex = this.logFileService.buildShortIdCorrelationIndex(this.logAllEntries);
         this.updateLogFilterMetadata();
-        this.logFilteredEntries = this.logFileService.filterEntries(this.logAllEntries, this.logCurrentFilters);
+        this.logFilteredEntries = this.filterLogCandidates();
         this.sortLogFilteredEntries();
         this.logTotalFilteredCount = this.logFilteredEntries.length;
         this.updateLogEntryCount();
@@ -548,7 +559,107 @@ const LogfilesViewMixin = {
             searchText: document.getElementById('logFilterSearch')?.value || undefined,
         };
 
+        this.cancelLogFilterScan();
         this.applyLogFiltersAndRender();
+        this.startLogFilterScan();
+    },
+
+    // ==================== FULL-LOG FILTER SCAN ====================
+
+    /** True when a text filter is long enough to justify scanning the whole log. */
+    hasLogScanFilter() {
+        const f = this.logCurrentFilters ?? {};
+        return [f.searchText, f.requestId, f.agentSessionId].some(
+            v => typeof v === 'string' && v.trim().length >= LOG_SCAN_MIN_CHARS
+        );
+    },
+
+    cancelLogFilterScan() {
+        this.logScanToken = (this.logScanToken ?? 0) + 1;
+        this.logScanEntries = [];
+        this.logScanStatus = '';
+    },
+
+    /** Window entries plus scan matches outside the window, filtered by the current filters. */
+    filterLogCandidates() {
+        let candidates = this.logAllEntries;
+        if (this.logScanEntries?.length > 0) {
+            const windowKeys = new Set(this.logAllEntries.map(e => this.getLogEntryKey(e)));
+            const extra = this.logScanEntries.filter(e => !windowKeys.has(this.getLogEntryKey(e)));
+            candidates = this.logFileService.mergeEntries(this.logAllEntries, extra);
+        }
+        return this.logFileService.filterEntries(candidates, this.logCurrentFilters);
+    },
+
+    /** Re-filter after scan results change while keeping the current scroll page. */
+    refreshLogScanResults() {
+        this.logFilteredEntries = this.filterLogCandidates();
+        this.sortLogFilteredEntries();
+        this.logTotalFilteredCount = this.logFilteredEntries.length;
+        this.updateLogEntryCount();
+        this.sendLogPage(this.logCurrentStartIndex);
+    },
+
+    /**
+     * Stream every log source in bounded chunks and keep entries matching the current filters,
+     * so rows outside the loaded window show up in the view.
+     */
+    async startLogFilterScan() {
+        if (!this.hasLogScanFilter()) { return; }
+        const token = this.logScanToken;
+        const filters = this.logCurrentFilters;
+        const sources = Object.values(this.logSourceWindows).filter(source =>
+            (source.localFile || source.relativePath) &&
+            (!filters.source || filters.source === source.source)
+        );
+        if (sources.length === 0) { return; }
+
+        let matchCount = 0;
+        for (const source of sources) {
+            let offset = 0;
+            try {
+                while (token === this.logScanToken && matchCount < LOG_SCAN_MAX_MATCHES) {
+                    const result = source.localFile
+                        ? await this.readLocalLogChunk(source, 'forward', offset)
+                        : await this.agentService.readServerFile(source.relativePath, {
+                            direction: 'forward',
+                            offset,
+                            maxBytes: LOG_SCAN_CHUNK_BYTES,
+                            pasoePathOverride: source.pasoePath
+                        });
+                    if (token !== this.logScanToken || result.fileTruncated) { break; }
+
+                    if (result.content) {
+                        const entries = source.source === 'agent'
+                            ? this.logFileService.parseAgentLog(result.content)
+                            : this.logFileService.parseAccessLog(result.content);
+                        const matches = this.logFileService.filterEntries(entries, filters);
+                        if (matches.length > 0) {
+                            this.logScanEntries.push(...matches);
+                            matchCount += matches.length;
+                            this.refreshLogScanResults();
+                        }
+                    }
+
+                    const total = result.totalSize || 1;
+                    this.logScanStatus = `searching ${source.source} log ${Math.min(100, Math.round(result.newOffset / total * 100))}%`;
+                    this.updateLogEntryCount();
+
+                    // No progress means no complete line in the chunk; stop instead of looping forever
+                    if (result.newOffset <= offset) { break; }
+                    offset = result.newOffset;
+                    if (!result.hasNewer) { break; }
+                }
+            } catch (error) {
+                console.warn(`[Logfiles] Filter scan of ${source.source} log failed:`, error);
+            }
+            if (token !== this.logScanToken) { return; }
+        }
+
+        this.logScanStatus = matchCount >= LOG_SCAN_MAX_MATCHES
+            ? `full-log search limited to ${LOG_SCAN_MAX_MATCHES.toLocaleString()} matches`
+            : 'full log searched';
+        this.updateLogEntryCount();
     },
 
     clearLogFilters() {
@@ -568,6 +679,7 @@ const LogfilesViewMixin = {
         this.logSortDirection = 'asc';
         this.updateLogSortIndicator();
         this.logCurrentFilters = {};
+        this.cancelLogFilterScan();
         this.applyLogFiltersAndRender();
     },
 
@@ -664,7 +776,7 @@ const LogfilesViewMixin = {
     // ==================== APPLY & RENDER ====================
 
     applyLogFiltersAndRender() {
-        this.logFilteredEntries = this.logFileService.filterEntries(this.logAllEntries, this.logCurrentFilters);
+        this.logFilteredEntries = this.filterLogCandidates();
         this.sortLogFilteredEntries();
         this.logTotalFilteredCount = this.logFilteredEntries.length;
 
@@ -688,9 +800,10 @@ const LogfilesViewMixin = {
         if (!el) { return; }
         const total = this.logAllEntries.length;
         const filtered = this.logFilteredEntries.length;
-        el.textContent = total === filtered
+        const scanSuffix = this.logScanStatus ? ` (${this.logScanStatus})` : '';
+        el.textContent = (total === filtered
             ? `${total.toLocaleString()} loaded entries`
-            : `${filtered.toLocaleString()} of ${total.toLocaleString()} loaded entries`;
+            : `${filtered.toLocaleString()} of ${total.toLocaleString()} loaded entries`) + scanSuffix;
     },
 
     updateLogVirtualSpacer() {
@@ -985,6 +1098,7 @@ const LogfilesViewMixin = {
      * @throws {Error} With a user-presentable message when paths cannot be resolved
      */
     async resolveLogSources(date) {
+        if (!this.logFileService) { this.logFileService = new LogFileService(); }
         const pasoePath = this.getEffectivePasoePath();
         if (!pasoePath) {
             throw new Error('PASOE path not available. Check Settings → PASOE Instance.');
@@ -1019,7 +1133,7 @@ const LogfilesViewMixin = {
 
     /**
      * Open the Logfiles view for an application/date and apply filters from another view.
-     * Filters only cover the bounded loaded window; older entries need "Older".
+     * Text filters also scan the full log, so older entries are added to the view.
      * @param {{applicationName?: string, date?: string, processId?: string, agentSessionId?: string, requestId?: string}} preset
      */
     async openLogfilesWith(preset = {}) {
@@ -1049,7 +1163,7 @@ const LogfilesViewMixin = {
 
         const statusEl = document.getElementById('logAutoStatus');
         if (statusEl && (processId || agentSessionId || requestId)) {
-            statusEl.textContent = 'Filters cover the loaded window only — use ◀ Older to load earlier entries';
+            statusEl.textContent = 'Matching entries outside the loaded window are added by a full-log search';
         }
     },
 
@@ -1127,6 +1241,9 @@ const LogfilesViewMixin = {
             // Load only the newest chunk from both logs
             await this.autoLoadIncremental();
 
+
+            this.cancelLogFilterScan();
+            this.startLogFilterScan();
             if (statusEl) { statusEl.textContent = `Tail loaded (${this.logAllEntries.length} entries in window)`; }
 
         } catch (e) {

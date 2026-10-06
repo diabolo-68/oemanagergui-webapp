@@ -177,6 +177,79 @@ describe('LogfilesViewMixin.resolveLogSources', () => {
     });
 });
 
+describe('LogfilesViewMixin full-log filter scan', () => {
+    const line = (ts, msg) => `${ts} 100 1 1 AS-1 ROOT:w:00000001 APPL  ${msg}\n`;
+
+    beforeEach(() => {
+        app.logCurrentFilters = {};
+        app.logScanEntries = [];
+        app.logScanToken = 0;
+        app.logScanStatus = '';
+        app.logAllEntries = [];
+        app.logCurrentStartIndex = 0;
+        app.logSortField = 'timestamp';
+        app.logSourceWindows = {
+            agent: { ...app.createLogSourceWindow('agent'), relativePath: 'logs/agent.log' },
+            access: app.createLogSourceWindow('access')
+        };
+        app.updateLogEntryCount = vi.fn();
+        app.sendLogPage = vi.fn();
+    });
+
+    it('only scans when a text filter has at least 3 characters', () => {
+        app.logCurrentFilters = { searchText: 'ab' };
+        expect(app.hasLogScanFilter()).toBe(false);
+        app.logCurrentFilters = { searchText: 'abc' };
+        expect(app.hasLogScanFilter()).toBe(true);
+        app.logCurrentFilters = { agentNumber: '12345' };
+        expect(app.hasLogScanFilter()).toBe(false);
+    });
+
+    it('does not read the log for a short filter', async () => {
+        app.logCurrentFilters = { searchText: 'ab' };
+
+        await app.startLogFilterScan();
+
+        expect(app.agentService.readServerFile).not.toHaveBeenCalled();
+    });
+
+    it('streams the whole log and keeps only matching entries outside the window', async () => {
+        app.logCurrentFilters = { searchText: 'needle' };
+        app.agentService.readServerFile
+            .mockResolvedValueOnce(rangeResult(0, 100, 200, line('2026-04-16T10:00:00.000+0200', 'needle early') + line('2026-04-16T10:00:01.000+0200', 'other')))
+            .mockResolvedValueOnce(rangeResult(100, 200, 200, line('2026-04-16T10:00:02.000+0200', 'needle late')));
+
+        await app.startLogFilterScan();
+
+        expect(app.agentService.readServerFile).toHaveBeenCalledTimes(2);
+        expect(app.agentService.readServerFile.mock.calls[1][1].offset).toBe(100);
+        expect(app.logScanEntries.map(e => e.message.trim())).toEqual(['needle early', 'needle late']);
+        expect(app.logFilteredEntries).toHaveLength(2);
+        expect(app.logScanStatus).toBe('full log searched');
+    });
+
+    it('does not duplicate matches already in the loaded window', () => {
+        const entries = app.logFileService.parseAgentLog(line('2026-04-16T10:00:00.000+0200', 'needle'));
+        app.logAllEntries = entries;
+        app.logScanEntries = app.logFileService.parseAgentLog(line('2026-04-16T10:00:00.000+0200', 'needle'));
+        app.logCurrentFilters = { searchText: 'needle' };
+
+        expect(app.filterLogCandidates()).toHaveLength(1);
+    });
+
+    it('discards results of a scan that was superseded', async () => {
+        app.logCurrentFilters = { searchText: 'needle' };
+        app.agentService.readServerFile.mockImplementationOnce(async () => {
+            app.cancelLogFilterScan();
+            return rangeResult(0, 100, 100, line('2026-04-16T10:00:00.000+0200', 'needle'));
+        });
+
+        await app.startLogFilterScan();
+
+        expect(app.logScanEntries).toEqual([]);
+    });
+});
+
 describe('LogfilesViewMixin pre-filtered open', () => {
     beforeEach(() => {
         document.body.innerHTML = `
@@ -219,7 +292,7 @@ describe('LogfilesViewMixin pre-filtered open', () => {
         expect(document.getElementById('logFilterSession').value).toBe('AS-7');
         expect(document.getElementById('logFilterRequestId').value).toBe('ROOT:w:1');
         expect(app.sendLogFilters).toHaveBeenCalled();
-        expect(document.getElementById('logAutoStatus').textContent).toMatch(/loaded window only/);
+        expect(document.getElementById('logAutoStatus').textContent).toMatch(/full-log search/);
         expect(app._logfilesAutoLoadAttempted).toBe(true);
     });
 

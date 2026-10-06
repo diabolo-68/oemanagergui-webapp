@@ -991,6 +991,7 @@ const AblObjectsViewMixin = {
         if (statusEl) { statusEl.textContent = 'Reading properties...'; }
 
         try {
+            if (!this.logFileService) { this.logFileService = new LogFileService(); }
             const pasoePathOption = this.getPasoePathOption();
 
             // Read openedge.properties to find log directory
